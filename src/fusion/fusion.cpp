@@ -145,15 +145,20 @@ void ccl_fusion_manager::reset() {
 }
 
 bool ccl_fusion_manager::can_fuse(ccl_master_sched* sched) {
-    size_t bytes = sched->coll_param.count * sched->coll_param.dtype.size();
-
-    if (bytes >= bytes_threshold) {
-        LOG_DEBUG("can't fuse due to size ", bytes, ", max ", bytes_threshold);
+    if (atl_wrapper::attr.out.enable_device_buf) {
+        /* TODO: implement fusion with D2D copies */
         return false;
     }
 
     if (sched->coll_param.ctype != ccl_coll_allreduce) {
         LOG_DEBUG("can't fuse due to coll_type ", ccl_coll_type_to_str(sched->coll_param.ctype));
+        return false;
+    }
+
+    size_t bytes = sched->coll_param.get_send_count() * sched->coll_param.dtype.size();
+
+    if (bytes >= bytes_threshold) {
+        LOG_DEBUG("can't fuse due to size ", bytes, ", max ", bytes_threshold);
         return false;
     }
 
@@ -212,7 +217,7 @@ ccl_master_sched* ccl_fusion_manager::build_sched() {
     max_priority = first_sched->coll_attr.priority;
 
     for (const auto& s : exec_queue) {
-        sum_count += s->coll_param.count;
+        sum_count += s->coll_param.get_send_count();
         if (!s->coll_attr.to_cache) {
             use_cache = false;
         }
@@ -232,16 +237,16 @@ ccl_master_sched* ccl_fusion_manager::build_sched() {
         ccl_master_sched* sched = nullptr;
         switch (ctype) {
             case ccl_coll_allreduce: {
-                ccl_coll_param coll_param{};
                 fusion_buf = this->buf_cache.get();
-                coll_param.ctype = ctype;
-                coll_param.send_buf = fusion_buf;
-                coll_param.recv_buf = fusion_buf;
-                coll_param.count = sum_count;
-                coll_param.dtype = dtype;
-                coll_param.reduction = reduction;
-                coll_param.comm = comm;
-                coll_param.stream = nullptr;
+                ccl_coll_attr coll_attr;
+                ccl_coll_param coll_param = ccl_coll_param::create_allreduce_param(fusion_buf,
+                                                                                   fusion_buf,
+                                                                                   sum_count,
+                                                                                   dtype.idx(),
+                                                                                   reduction,
+                                                                                   coll_attr,
+                                                                                   comm,
+                                                                                   nullptr);
                 sched = new ccl_master_sched(coll_param);
                 sched->internal_type = ccl_sched_internal_fusion;
             } break;
@@ -335,27 +340,32 @@ ccl_master_sched* ccl_fusion_manager::build_sched() {
             size_t global_copy_idx = idx * copies_per_part + copy_idx;
 #ifdef CCL_ENABLE_SYCL
             if (stream && stream->is_sycl_device_stream())
-                entry_factory::make_entry<sycl_copy_entry<sycl_copy_direction::d2h>>(
+                entry_factory::make_entry<sycl_copy_entry>(
                     part_scheds[idx].get(),
-                    ccl_buffer(&(exec_queue[global_copy_idx]->coll_param.sycl_send_buf),
-                               exec_queue[global_copy_idx]->coll_param.count * dtype_size,
-                               ccl_buffer_type::INDIRECT),
+                    copy_direction::d2h,
+                    ccl_buffer(
+                        exec_queue[global_copy_idx]->coll_param.get_send_buf_ptr(
+                            0, ccl_coll_param::buf_type::device),
+                        exec_queue[global_copy_idx]->coll_param.get_send_count() * dtype_size,
+                        ccl_buffer_type::INDIRECT),
                     ccl_buffer(fusion_buf, buf_cache.get_buf_size(), offset),
-                    exec_queue[global_copy_idx]->coll_param.count,
+                    exec_queue[global_copy_idx]->coll_param.get_send_count(),
                     dtype,
-                    stream);
+                    stream,
+                    first_sched->coll_attr.is_sycl_buffer);
             else
 #endif /* CCL_ENABLE_SYCL */
                 entry_factory::make_entry<copy_entry>(
                     part_scheds[idx].get(),
-                    ccl_buffer(&(exec_queue[global_copy_idx]->coll_param.send_buf),
-                               exec_queue[global_copy_idx]->coll_param.count * dtype_size,
-                               ccl_buffer_type::INDIRECT),
+                    ccl_buffer(
+                        exec_queue[global_copy_idx]->coll_param.get_send_buf_ptr(),
+                        exec_queue[global_copy_idx]->coll_param.get_send_count() * dtype_size,
+                        ccl_buffer_type::INDIRECT),
                     ccl_buffer(fusion_buf, buf_cache.get_buf_size(), offset),
-                    exec_queue[global_copy_idx]->coll_param.count,
+                    exec_queue[global_copy_idx]->coll_param.get_send_count(),
                     dtype);
 
-            offset += exec_queue[global_copy_idx]->coll_param.count * dtype_size;
+            offset += exec_queue[global_copy_idx]->coll_param.get_send_count() * dtype_size;
         }
     }
 
@@ -372,29 +382,34 @@ ccl_master_sched* ccl_fusion_manager::build_sched() {
             size_t global_copy_idx = idx * copies_per_part + copy_idx;
 #ifdef CCL_ENABLE_SYCL
             if (stream && stream->is_sycl_device_stream())
-                entry_factory::make_entry<sycl_copy_entry<sycl_copy_direction::h2d>>(
+                entry_factory::make_entry<sycl_copy_entry>(
                     part_scheds[idx].get(),
+                    copy_direction::h2d,
                     ccl_buffer(fusion_buf, buf_cache.get_buf_size(), offset),
-                    ccl_buffer(&(exec_queue[global_copy_idx]->coll_param.sycl_recv_buf),
-                               exec_queue[global_copy_idx]->coll_param.count * dtype_size,
-                               ccl_buffer_type::INDIRECT),
-                    exec_queue[global_copy_idx]->coll_param.count,
+                    ccl_buffer(
+                        exec_queue[global_copy_idx]->coll_param.get_recv_buf_ptr(
+                            0, ccl_coll_param::buf_type::device),
+                        exec_queue[global_copy_idx]->coll_param.get_recv_count() * dtype_size,
+                        ccl_buffer_type::INDIRECT),
+                    exec_queue[global_copy_idx]->coll_param.get_recv_count(),
                     dtype,
-                    stream);
+                    stream,
+                    first_sched->coll_attr.is_sycl_buffer);
             else
 #endif /* CCL_ENABLE_SYCL */
                 entry_factory::make_entry<copy_entry>(
                     part_scheds[idx].get(),
                     ccl_buffer(fusion_buf, buf_cache.get_buf_size(), offset),
-                    ccl_buffer(&(exec_queue[global_copy_idx]->coll_param.recv_buf),
-                               exec_queue[global_copy_idx]->coll_param.count * dtype_size,
-                               ccl_buffer_type::INDIRECT),
-                    exec_queue[global_copy_idx]->coll_param.count,
+                    ccl_buffer(
+                        exec_queue[global_copy_idx]->coll_param.get_recv_buf_ptr(),
+                        exec_queue[global_copy_idx]->coll_param.get_recv_count() * dtype_size,
+                        ccl_buffer_type::INDIRECT),
+                    exec_queue[global_copy_idx]->coll_param.get_recv_count(),
                     dtype);
 
             part_scheds[idx]->add_barrier();
 
-            offset += exec_queue[global_copy_idx]->coll_param.count * dtype_size;
+            offset += exec_queue[global_copy_idx]->coll_param.get_recv_count() * dtype_size;
             entry_factory::make_entry<function_entry>(
                 part_scheds[idx].get(), complete_user_request, exec_queue[global_copy_idx]);
             CCL_THROW_IF_NOT(!exec_queue[global_copy_idx]->is_completed(),
@@ -454,7 +469,7 @@ void ccl_fusion_manager::execute() {
                 exec_queue.push_back(first_sched);
                 postponed_queue.pop_front();
                 exec_queue_sum_bytes =
-                    first_sched->coll_param.count * first_sched->coll_param.dtype.size();
+                    first_sched->coll_param.get_send_count() * first_sched->coll_param.dtype.size();
             }
 
             for (auto it = postponed_queue.begin(); it != postponed_queue.end();) {
@@ -464,7 +479,7 @@ void ccl_fusion_manager::execute() {
                     s->coll_param.ctype == first_sched->coll_param.ctype &&
                     s->coll_param.reduction == first_sched->coll_param.reduction &&
                     s->coll_param.stream == first_sched->coll_param.stream) {
-                    size_t size = s->coll_param.count * s->coll_param.dtype.size();
+                    size_t size = s->coll_param.get_send_count() * s->coll_param.dtype.size();
                     if (exec_queue_sum_bytes + size > CCL_FUSION_BUFFER_SIZE) {
                         LOG_DEBUG("too much bytes in buffer, flush exec_queue");
                         flush_exec_queue = true;

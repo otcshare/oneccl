@@ -37,8 +37,11 @@ std::map<ccl_priority_mode, std::string> env_data::priority_mode_names = {
 };
 
 std::map<ccl_atl_transport, std::string> env_data::atl_transport_names = {
-    std::make_pair(ccl_atl_ofi, "ofi"),
+    std::make_pair(ccl_atl_ofi, "ofi")
+#ifdef CCL_ENABLE_MPI
+        ,
     std::make_pair(ccl_atl_mpi, "mpi")
+#endif /* CCL_ENABLE_MPI */
 };
 
 std::map<ccl_staging_buffer, std::string> env_data::staging_buffer_names = {
@@ -63,14 +66,19 @@ env_data::env_data()
           worker_count(1),
           worker_offload(1),
           worker_wait(1),
-
+#ifdef CCL_ENABLE_MPI
           atl_transport(ccl_atl_mpi),
+#else /* CCL_ENABLE_MPI */
+          atl_transport(ccl_atl_ofi),
+#endif /* CCL_ENABLE_MPI */
           enable_shm(0),
-          sync_coll(0),
-          extra_ep(0),
+          enable_rma(0),
+          enable_device_buf(0),
+          enable_sync_coll(0),
+          enable_extra_ep(0),
 
           mnic_type(ATL_MNIC_NONE),
-          mnic_count(4),
+          mnic_count(CCL_ENV_SIZET_NOT_SPECIFIED),
 
           enable_unordered_coll(0),
 
@@ -80,14 +88,13 @@ env_data::env_data()
           fusion_check_urgent(1),
           fusion_cycle_ms(0.2),
 
-          enable_rma(0),
           priority_mode(ccl_priority_none),
           spin_count(100),
           yield_type(ccl_yield_pause),
           max_short_size(0),
           bcast_part_count(CCL_ENV_SIZET_NOT_SPECIFIED),
           cache_key_type(ccl_cache_key_match_id),
-          enable_cache_flush(1),
+          enable_cache_flush(0),
           enable_strict_order(0),
           staging_buffer(ccl_staging_usm),
 
@@ -107,10 +114,12 @@ env_data::env_data()
           enable_comm_kernels(0),
           comm_kernels_path(),
           comm_kernels_debug(0),
-          gpu_thread_count(CCL_ENV_SIZET_NOT_SPECIFIED),
+          gpu_group_size(CCL_ENV_SIZET_NOT_SPECIFIED),
+          gpu_group_count(CCL_ENV_SIZET_NOT_SPECIFIED),
 
           bf16_impl_type(ccl_bf16_no_compiler_support),
-          fp16_impl_type(ccl_fp16_no_compiler_support) {}
+          fp16_impl_type(ccl_fp16_no_compiler_support) {
+}
 
 void env_data::parse() {
     env_2_enum(CCL_LOG_LEVEL, ccl_logger::level_names, log_level);
@@ -135,8 +144,8 @@ void env_data::parse() {
 
     if (fw_type == ccl_framework_horovod) {
         worker_wait = 1;
-        sync_coll = 1;
-        extra_ep = 1;
+        enable_sync_coll = 1;
+        enable_extra_ep = 1;
         yield_type = ccl_yield_sched_yield;
     }
 
@@ -147,11 +156,16 @@ void env_data::parse() {
 
     env_2_atl_transport();
     env_2_type(CCL_ATL_SHM, enable_shm);
-    env_2_type(CCL_ATL_SYNC_COLL, sync_coll);
-    env_2_type(CCL_ATL_EXTRA_EP, extra_ep);
+    env_2_type(CCL_ATL_RMA, enable_rma);
+    env_2_type(CCL_ATL_DEVICE_BUF, enable_device_buf);
+    env_2_type(CCL_ATL_SYNC_COLL, enable_sync_coll);
+    env_2_type(CCL_ATL_EXTRA_EP, enable_extra_ep);
 
     env_2_enum(CCL_MNIC, mnic_type_names, mnic_type);
     env_2_type(CCL_MNIC_COUNT, mnic_count);
+    if (mnic_count == CCL_ENV_SIZET_NOT_SPECIFIED) {
+        mnic_count = worker_count;
+    }
 
     env_2_type(CCL_ALLGATHERV, allgatherv_algo_raw);
     env_2_type(CCL_ALLREDUCE, allreduce_algo_raw);
@@ -191,7 +205,6 @@ void env_data::parse() {
     if (worker_wait)
         spin_count = 1000;
 
-    env_2_type(CCL_RMA, enable_rma);
     env_2_enum(CCL_PRIORITY, priority_mode_names, priority_mode);
     env_2_type(CCL_SPIN_COUNT, spin_count);
     env_2_enum(CCL_YIELD, ccl_yield_type_names, yield_type);
@@ -227,16 +240,28 @@ void env_data::parse() {
     env_2_type(CCL_ALLTOALL_SCATTER_PLAIN, alltoall_scatter_plain);
 
     env_2_type(CCL_COMM_KERNELS, enable_comm_kernels);
+
     if (enable_comm_kernels) {
+#ifndef MULTI_GPU_SUPPORT
+        CCL_THROW("comm kernels are requested but not supported in this version of CCL");
+#endif
+
         env_2_type(CCL_COMM_KERNELS_PATH, comm_kernels_path);
         if (comm_kernels_path.empty()) {
             std::string ccl_root = getenv("CCL_ROOT");
             CCL_THROW_IF_NOT(!ccl_root.empty(), "incorrect comm kernels path, CCL_ROOT not found!");
             comm_kernels_path = ccl_root + "/lib/kernels/";
         }
+        // TODO remove IPC workaround knobs
+        if (!getenv("SYCL_PI_LEVEL_ZERO_DISABLE_USM_ALLOCATOR")) {
+            setenv("SYCL_PI_LEVEL_ZERO_DISABLE_USM_ALLOCATOR", "1", 1);
+            LOG_WARN(
+                "environment variable 'SYCL_PI_LEVEL_ZERO_DISABLE_USM_ALLOCATOR' is not set, will be used SYCL_PI_LEVEL_ZERO_DISABLE_USM_ALLOCATOR=1");
+        }
         env_2_type(CCL_COMM_KERNELS_DEBUG, comm_kernels_debug);
     }
-    env_2_type(CCL_GPU_THREAD_COUNT, gpu_thread_count);
+    env_2_type(CCL_GPU_GROUP_SIZE, gpu_group_size);
+    env_2_type(CCL_GPU_GROUP_COUNT, gpu_group_count);
 
     auto bf16_impl_types = ccl_bf16_get_impl_types();
     ccl_bf16_impl_type bf16_env_impl_type;
@@ -271,6 +296,8 @@ void env_data::print(int rank) {
     else
         was_printed = true;
 
+    auto& global_data = ccl::global_data::get();
+
     if (rank == 0) {
         auto version = utils::get_library_version();
         LOG_INFO("library version: ", version.full);
@@ -287,23 +314,24 @@ void env_data::print(int rank) {
         LOG_INFO("build mode: ", build_mode);
         LOG_INFO("C compiler: ", CCL_C_COMPILER);
         LOG_INFO("C++ compiler: ", CCL_CXX_COMPILER);
+        LOG_INFO(global_data.hwloc_wrapper->to_string());
     }
 
-    auto& global_data = ccl::global_data::get();
     auto local_proc_idx = global_data.executor->get_local_proc_idx();
     auto local_proc_count = global_data.executor->get_local_proc_count();
 
     if (rank < (int)local_proc_count) {
         for (size_t w_idx = 0; w_idx < worker_count; w_idx++) {
-            LOG_INFO(CCL_WORKER_AFFINITY,
-                     ": local process [",
+            LOG_INFO("local process [",
                      local_proc_idx,
                      ":",
                      local_proc_count,
                      "]: worker: ",
                      w_idx,
-                     ", core: ",
-                     worker_affinity[local_proc_idx * worker_count + w_idx]);
+                     ", cpu: ",
+                     worker_affinity[local_proc_idx * worker_count + w_idx],
+                     ", numa: ",
+                     worker_mem_affinity[local_proc_idx * worker_count + w_idx]);
         }
     }
 
@@ -321,8 +349,10 @@ void env_data::print(int rank) {
 
     LOG_INFO(CCL_ATL_TRANSPORT, ": ", str_by_enum(atl_transport_names, atl_transport));
     LOG_INFO(CCL_ATL_SHM, ": ", enable_shm);
-    LOG_DEBUG(CCL_ATL_SYNC_COLL, ": ", sync_coll);
-    LOG_DEBUG(CCL_ATL_EXTRA_EP, ": ", extra_ep);
+    LOG_INFO(CCL_ATL_RMA, ": ", enable_rma);
+    LOG_INFO(CCL_ATL_DEVICE_BUF, ": ", enable_device_buf);
+    LOG_DEBUG(CCL_ATL_SYNC_COLL, ": ", enable_sync_coll);
+    LOG_DEBUG(CCL_ATL_EXTRA_EP, ": ", enable_extra_ep);
 
     LOG_INFO(CCL_MNIC, ": ", str_by_enum(mnic_type_names, mnic_type));
     LOG_INFO(CCL_MNIC_COUNT, ": ", mnic_count);
@@ -362,7 +392,6 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_FUSION_CHECK_URGENT, ": ", fusion_check_urgent);
     LOG_INFO(CCL_FUSION_CYCLE_MS, ": ", fusion_cycle_ms);
 
-    LOG_INFO(CCL_RMA, ": ", enable_rma);
     LOG_INFO(CCL_PRIORITY, ": ", str_by_enum(priority_mode_names, priority_mode));
     LOG_INFO(CCL_SPIN_COUNT, ": ", spin_count);
     LOG_INFO(CCL_YIELD, ": ", str_by_enum(ccl_yield_type_names, yield_type));
@@ -403,10 +432,14 @@ void env_data::print(int rank) {
              ": ",
              (!comm_kernels_path.empty()) ? comm_kernels_path : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_COMM_KERNELS_DEBUG, ": ", comm_kernels_debug);
-    LOG_INFO(CCL_GPU_THREAD_COUNT,
+    LOG_INFO(CCL_GPU_GROUP_SIZE,
              ": ",
-             (gpu_thread_count != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(gpu_thread_count)
-                                                               : CCL_ENV_STR_NOT_SPECIFIED);
+             (gpu_group_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(gpu_group_size)
+                                                             : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO(CCL_GPU_GROUP_COUNT,
+             ": ",
+             (gpu_group_count != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(gpu_group_count)
+                                                              : CCL_ENV_STR_NOT_SPECIFIED);
 #endif /* CCL_ENABLE_SYCL  */
 
     LOG_INFO(CCL_BF16, ": ", str_by_enum(bf16_impl_names, bf16_impl_type));
@@ -491,28 +524,91 @@ int env_data::env_2_worker_affinity_auto(size_t local_proc_idx, size_t workers_p
     return 1;
 }
 
-int env_data::parse_core_id(const std::string& core_id_str, size_t& result) {
+int env_data::parse_number(const std::string& number_str, size_t& result) {
     char* end_ptr;
-    const char* core_id_str_ptr = core_id_str.c_str();
+    const char* number_str_ptr = number_str.c_str();
 
     errno = 0;
-    auto core_id = std::strtol(core_id_str_ptr, &end_ptr, 10);
+    auto core_id = std::strtol(number_str_ptr, &end_ptr, 10);
 
     if ((errno == ERANGE && (core_id == LONG_MAX || core_id == LONG_MIN)) ||
         (errno != 0 && core_id == 0)) {
-        LOG_ERROR("core id value is invalid in string: ", core_id_str);
+        LOG_ERROR("core id value is invalid in string: ", number_str);
         return 0;
     }
-    if (end_ptr == core_id_str_ptr) {
-        LOG_ERROR("no digits were found in string: ", core_id_str);
+    if (end_ptr == number_str_ptr) {
+        LOG_ERROR("no digits were found in string: ", number_str);
         return 0;
     }
     if (core_id < 0) {
-        LOG_ERROR(
-            "core id cannot be less than zero but got ", core_id, " in string: ", core_id_str);
+        LOG_ERROR("core id cannot be less than zero but got ", core_id, " in string: ", number_str);
         return 0;
     }
     result = core_id;
+    return 1;
+}
+
+int env_data::parse_affinity(const std::string& input,
+                             std::vector<ssize_t>& output,
+                             size_t expected_output_size) {
+    size_t idx;
+    char* range_str;
+
+    /* create copy of input string because it will be modified in strsep */
+    std::string input_copy(input.c_str());
+    char* input_str = (char*)input_copy.c_str();
+
+    output.clear();
+
+    while (input_str) {
+        range_str = strsep(&input_str, ",");
+        if (!range_str) {
+            break;
+        }
+
+        auto range = tokenize<std::vector<std::string>>(std::string(range_str), '-');
+
+        if ((range.size() != 2) && (range.size() != 1)) {
+            LOG_ERROR(
+                "unexpected format in input: ",
+                input,
+                ", specify range values using <first_value>-<last_value> or single value using <value>");
+            return 0;
+        }
+
+        if (range.size() == 1) {
+            /* to unify logic below */
+            range.push_back(*range.begin());
+        }
+
+        CCL_ASSERT(range.size() == 2, "unexpected number of values in range");
+
+        size_t first_value, last_value;
+        if (!parse_number(range[0], first_value) || !parse_number(range[1], last_value)) {
+            return 0;
+        }
+
+        if (first_value > last_value) {
+            LOG_ERROR("unexpected first and last values in range: ",
+                      range_str,
+                      ", first value should be less or equal to last value");
+            return 0;
+        }
+
+        for (idx = first_value; idx <= last_value; idx++) {
+            output.push_back(idx);
+        }
+    }
+
+    if (output.size() < expected_output_size) {
+        LOG_ERROR("unexpected number of values in input: ",
+                  input,
+                  ", expected at least ",
+                  expected_output_size,
+                  " values");
+        return 0;
+    }
+
     return 1;
 }
 
@@ -520,17 +616,12 @@ int env_data::env_2_worker_affinity(size_t local_proc_idx, size_t local_proc_cou
     CCL_THROW_IF_NOT(local_proc_count > 0);
 
     size_t idx;
-    std::unique_ptr<char> affinity_copy;
-    char* affinity_to_parse = getenv(CCL_WORKER_AFFINITY);
-    char* core_range_str;
-    char* tmp;
+    char* env_to_parse = getenv(CCL_WORKER_AFFINITY);
     size_t system_core_count;
-
     size_t affinity_size = local_proc_count * worker_count;
 
-    if (!affinity_to_parse || (strlen(affinity_to_parse) == 0) ||
-        (strcmp(affinity_to_parse, "auto") == 0)) {
-        worker_affinity.assign(affinity_size, 0);
+    if (!env_to_parse || (strlen(env_to_parse) == 0) || (strcmp(env_to_parse, "auto") == 0)) {
+        worker_affinity.assign(affinity_size, CCL_UNDEFINED_CPU_ID);
         if (std::getenv(I_MPI_AVAILABLE_CORES_ENV)) {
             /* generate auto affinity based on IMPI process pinning */
             return env_2_worker_affinity_auto(local_proc_idx, worker_count);
@@ -550,63 +641,37 @@ int env_data::env_2_worker_affinity(size_t local_proc_idx, size_t local_proc_cou
         }
     }
 
-    /* create copy of original buffer because it will be modified in strsep */
-    size_t affinity_len = strlen(affinity_to_parse);
-    affinity_copy =
-        std::unique_ptr<char>(static_cast<char*>(CCL_CALLOC(affinity_len + 1, "affinity_copy")));
-    CCL_MEMCPY(affinity_copy.get(), affinity_to_parse, affinity_len);
-    tmp = affinity_copy.get();
+    CCL_THROW_IF_NOT(parse_affinity(env_to_parse, worker_affinity, affinity_size),
+                     "failed to parse worker affinity");
 
-    while (tmp) {
-        core_range_str = strsep(&tmp, ",");
-        if (!core_range_str) {
-            break;
+    return 1;
+}
+
+int env_data::env_2_worker_mem_affinity() {
+    CCL_THROW_IF_NOT(worker_affinity.size() > 0);
+
+    size_t idx;
+    char* env_to_parse = getenv(CCL_WORKER_MEM_AFFINITY);
+    size_t affinity_size = worker_affinity.size();
+
+    if (!env_to_parse || (strlen(env_to_parse) == 0) || (strcmp(env_to_parse, "auto") == 0)) {
+        worker_mem_affinity.assign(affinity_size, CCL_UNDEFINED_NUMA_NODE);
+        /* generate list of default numa nodes, local wrt worker cores */
+        for (idx = 0; idx < affinity_size; idx++) {
+            worker_mem_affinity[idx] =
+                ccl::global_data::get().hwloc_wrapper->get_numa_node_by_cpu(worker_affinity[idx]);
         }
-
-        auto core_range = tokenize<std::vector<std::string>>(std::string(core_range_str), '-');
-
-        if ((core_range.size() != 2) && (core_range.size() != 1)) {
-            LOG_ERROR(
-                "unexpected format in affinity: ",
-                affinity_to_parse,
-                ", specify core range using <first_core>-<last_core> or single core using <core>");
-            return 0;
-        }
-
-        if (core_range.size() == 1) {
-            /* to unify logic below */
-            core_range.push_back(*core_range.begin());
-        }
-
-        CCL_ASSERT(core_range.size() == 2, "unexpected number of cores in range");
-
-        size_t first_core, last_core;
-        if (!parse_core_id(core_range[0], first_core) || !parse_core_id(core_range[1], last_core)) {
-            return 0;
-        }
-
-        if (first_core > last_core) {
-            LOG_ERROR("unexpected first and last cores in range: ",
-                      core_range_str,
-                      ", first core should be less or equal to last core");
-            return 0;
-        }
-
-        for (idx = first_core; idx <= last_core; idx++) {
-            worker_affinity.push_back(idx);
-        }
+        return 1;
     }
 
-    if (worker_affinity.size() < affinity_size) {
-        LOG_ERROR("unexpected number of cores in affinity: ",
-                  affinity_to_parse,
-                  ", specify 1 core per 1 worker thread");
-        return 0;
-    }
+    CCL_THROW_IF_NOT(parse_affinity(env_to_parse, worker_mem_affinity, affinity_size),
+                     "failed to parse worker memory affinity");
+
     return 1;
 }
 
 void env_data::env_2_atl_transport() {
+#ifdef CCL_ENABLE_MPI
     if (!getenv(CCL_ATL_TRANSPORT) && !with_mpirun()) {
         LOG_WARN("did not find MPI-launcher specific variables, switch to ATL/OFI, "
                  "to force enable ATL/MPI set CCL_ATL_TRANSPORT=mpi");
@@ -614,6 +679,7 @@ void env_data::env_2_atl_transport() {
         atl_transport = ccl_atl_ofi;
     }
     else
+#endif /* CCL_ENABLE_MPI */
         env_2_enum(CCL_ATL_TRANSPORT, atl_transport_names, atl_transport);
 }
 

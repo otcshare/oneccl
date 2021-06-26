@@ -20,6 +20,7 @@
 #include "common/utils/utils.hpp"
 #include "sched/entry/postponed_fields.hpp"
 #include "internal_types.hpp"
+
 #include <chrono>
 #include <memory>
 
@@ -75,6 +76,10 @@ public:
     virtual const char* name() const = 0;
 
     static const char* status_to_str(ccl_sched_entry_status status);
+
+    virtual bool is_gpu_entry() const noexcept {
+        return false;
+    }
 
 protected:
     virtual void start() = 0;

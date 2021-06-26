@@ -76,7 +76,7 @@ void init(const init_attr& attr) {
 #ifdef MULTI_GPU_SUPPORT
     const auto& env_object = ccl::global_data::env();
     //WA
-    if (!env_object.comm_kernels_path.empty()) {
+    if (env_object.enable_comm_kernels) {
         register_gpu_module(env_object.comm_kernels_path);
     }
 #endif //MULTI_GPU_SUPPORT
@@ -126,31 +126,6 @@ context create_context() {
 stream create_stream() {
     return default_stream;
 }
-
-#ifdef CCL_ENABLE_SYCL
-communicator create_single_device_communicator(const int comm_size,
-                                               const int rank,
-                                               const cl::sycl::device& device,
-                                               const cl::sycl::context& context,
-                                               shared_ptr_class<kvs_interface> kvs) {
-    return detail::environment::instance().create_single_device_communicator(
-        comm_size, rank, device, context, kvs);
-}
-#endif // CCL_ENABLE_SYCL
-
-// communicator create_single_device_communicator(const size_t world_size,
-//                                     const int rank,
-//                                     cl::sycl::queue queue,
-//                                     shared_ptr_class<kvs_interface> kvs) const;
-
-// template<class DeviceSelectorType>
-// communicator create_single_device_communicator(const size_t world_size,
-//                                     const int rank,
-//                                     const DeviceSelectorType& selector,
-//                                     shared_ptr_class<kvs_interface> kvs) const
-// {
-//     return return detail::environment::instance().create_single_device_communicator(world_size, rank, cl::sycl::device(selector), kvs);
-// }
 
 } // namespace v1
 

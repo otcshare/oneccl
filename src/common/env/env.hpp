@@ -43,12 +43,15 @@ constexpr const char* CCL_WORKER_COUNT = "CCL_WORKER_COUNT";
 constexpr const char* CCL_WORKER_OFFLOAD = "CCL_WORKER_OFFLOAD";
 constexpr const char* CCL_WORKER_WAIT = "CCL_WORKER_WAIT";
 constexpr const char* CCL_WORKER_AFFINITY = "CCL_WORKER_AFFINITY";
+constexpr const char* CCL_WORKER_MEM_AFFINITY = "CCL_WORKER_MEM_AFFINITY";
 
 constexpr const char* I_MPI_AVAILABLE_CORES_ENV = "I_MPI_PIN_INFO";
 constexpr const char* I_MPI_AVAILABLE_CORES_DELIMS = ",x";
 
 constexpr const char* CCL_ATL_TRANSPORT = "CCL_ATL_TRANSPORT";
 constexpr const char* CCL_ATL_SHM = "CCL_ATL_SHM";
+constexpr const char* CCL_ATL_RMA = "CCL_ATL_RMA";
+constexpr const char* CCL_ATL_DEVICE_BUF = "CCL_ATL_DEVICE_BUF";
 constexpr const char* CCL_ATL_SYNC_COLL = "CCL_ATL_SYNC_COLL";
 constexpr const char* CCL_ATL_EXTRA_EP = "CCL_ATL_EXTRA_EP";
 
@@ -72,7 +75,6 @@ constexpr const char* CCL_FUSION_COUNT_THRESHOLD = "CCL_FUSION_COUNT_THRESHOLD";
 constexpr const char* CCL_FUSION_CHECK_URGENT = "CCL_FUSION_CHECK_URGENT";
 constexpr const char* CCL_FUSION_CYCLE_MS = "CCL_FUSION_CYCLE_MS";
 
-constexpr const char* CCL_RMA = "CCL_RMA";
 constexpr const char* CCL_PRIORITY = "CCL_PRIORITY";
 constexpr const char* CCL_SPIN_COUNT = "CCL_SPIN_COUNT";
 constexpr const char* CCL_YIELD = "CCL_YIELD";
@@ -99,7 +101,8 @@ constexpr const char* CCL_ALLTOALL_SCATTER_PLAIN = "CCL_ALLTOALL_SCATTER_PLAIN";
 constexpr const char* CCL_COMM_KERNELS = "CCL_COMM_KERNELS";
 constexpr const char* CCL_COMM_KERNELS_PATH = "CCL_COMM_KERNELS_PATH";
 constexpr const char* CCL_COMM_KERNELS_DEBUG = "CCL_COMM_KERNELS_DEBUG";
-constexpr const char* CCL_GPU_THREAD_COUNT = "CCL_GPU_THREAD_COUNT";
+constexpr const char* CCL_GPU_GROUP_SIZE = "CCL_GPU_GROUP_SIZE";
+constexpr const char* CCL_GPU_GROUP_COUNT = "CCL_GPU_GROUP_COUNT";
 
 constexpr const char* CCL_BF16 = "CCL_BF16";
 constexpr const char* CCL_FP16 = "CCL_FP16";
@@ -138,15 +141,18 @@ public:
     size_t worker_count;
     int worker_offload;
     int worker_wait;
-    std::vector<size_t> worker_affinity;
+    std::vector<ssize_t> worker_affinity;
+    std::vector<ssize_t> worker_mem_affinity;
 
     ccl_atl_transport atl_transport;
     int enable_shm;
-    int sync_coll;
-    int extra_ep;
+    int enable_rma;
+    int enable_device_buf;
+    int enable_sync_coll;
+    int enable_extra_ep;
 
     atl_mnic_t mnic_type;
-    size_t mnic_count;
+    ssize_t mnic_count;
 
     /*
        parsing logic can be quite complex
@@ -170,7 +176,6 @@ public:
     int fusion_check_urgent;
     float fusion_cycle_ms;
 
-    int enable_rma;
     ccl_priority_mode priority_mode;
     size_t spin_count;
     ccl_yield_type yield_type;
@@ -197,7 +202,8 @@ public:
     int enable_comm_kernels;
     std::string comm_kernels_path;
     int comm_kernels_debug;
-    ssize_t gpu_thread_count;
+    ssize_t gpu_group_size;
+    ssize_t gpu_group_count;
 
     ccl_bf16_impl_type bf16_impl_type;
     ccl_fp16_impl_type fp16_impl_type;
@@ -275,11 +281,16 @@ public:
     static std::map<atl_mnic_t, std::string> mnic_type_names;
 
     int env_2_worker_affinity(size_t local_proc_idx, size_t local_proc_count);
+    int env_2_worker_mem_affinity();
     void env_2_atl_transport();
 
 private:
     int env_2_worker_affinity_auto(size_t local_proc_idx, size_t workers_per_process);
-    int parse_core_id(const std::string& core_id_str, size_t& result);
+
+    int parse_affinity(const std::string& input,
+                       std::vector<ssize_t>& output,
+                       size_t expected_output_size);
+    int parse_number(const std::string& number_str, size_t& result);
 };
 
 } /* namespace ccl */

@@ -14,6 +14,7 @@
  limitations under the License.
 */
 #include <assert.h>
+#include <dlfcn.h>
 #include <inttypes.h>
 #include <math.h>
 #include <rdma/fabric.h>
@@ -31,7 +32,8 @@
 #include <errno.h>
 
 #include "atl.h"
-#include "hwloc/hwloc_wrapper.h"
+#include "common/global/global.hpp"
+#include "hwloc/hwloc_wrapper.hpp"
 
 #define ATL_OFI_BASE_PM_KEY     "atl-ofi"
 #define ATL_OFI_FI_ADDR_PM_KEY  ATL_OFI_BASE_PM_KEY "-fiaddr"
@@ -212,9 +214,10 @@ typedef struct {
 typedef struct atl_ofi_global_data {
     size_t ctx_count;
     int is_env_inited;
+    void* dlhandle;
     char prov_env_copy[ATL_OFI_MAX_PROV_ENV_LEN];
 
-    atl_ofi_global_data() : ctx_count(0), is_env_inited(0) {
+    atl_ofi_global_data() : ctx_count(0), is_env_inited(0), dlhandle(NULL) {
         memset(prov_env_copy, 0, sizeof(prov_env_copy));
     }
 } atl_ofi_global_data_t;
@@ -939,7 +942,7 @@ static atl_status_t atl_ofi_adjust_env(const atl_attr_t& attr) {
         memcpy(global_data.prov_env_copy, prov_env, strlen(prov_env));
     }
 
-    if (attr.enable_shm) {
+    if (attr.in.enable_shm) {
         /* add shm provider in the list of allowed providers */
         if (prov_env && !strstr(prov_env, ATL_OFI_SHM_PROV_NAME)) {
             /* whether single provider will be in the final env variable */
@@ -993,8 +996,9 @@ static atl_status_t atl_ofi_set_env(const atl_attr_t& attr) {
     setenv("FI_PSM3_NAME_SERVER", "0", 0);
     setenv("PSM3_NO_CPUAFFINITY", "1", 0);
     setenv("PSM3_RDMA", "2", 0);
+    setenv("PSM3_MR_CACHE_MODE", "0", 0); //TODO temporary
     setenv("PSM3_MULTI_EP", "1", 0);
-    if (attr.mnic_type == ATL_MNIC_NONE)
+    if (attr.in.mnic_type == ATL_MNIC_NONE)
         setenv("PSM3_NIC", "any", 0);
 
     char* hydra_uuid_env = getenv("I_MPI_HYDRA_UUID");
@@ -1017,6 +1021,16 @@ static atl_status_t atl_ofi_set_env(const atl_attr_t& attr) {
 #endif /* CCL_ENABLE_SYCL */
 
     atl_ofi_adjust_env(attr);
+
+    /*
+       load libfabric symbols into global namespace
+       to workaround issue with undefined symbols
+       in case of out-of-tree providers, like OFI/PSM3
+    */
+    global_data.dlhandle = dlopen("libfabric.so", RTLD_GLOBAL | RTLD_NOW);
+    if (global_data.dlhandle == NULL) {
+        CCL_THROW("dlopen (libfabric.so): ", dlerror());
+    }
 
     global_data.is_env_inited = 1;
 
@@ -1045,8 +1059,8 @@ static atl_status_t atl_ofi_finalize(atl_ctx_t* ctx) {
     }
 
     if (global_data.ctx_count == 0) {
-        if (hwloc_is_initialized()) {
-            CCL_THROW_IF_NOT(hwloc_finalize() == HWLOC_SUCCESS, "failed to finalize hwloc");
+        if (global_data.dlhandle) {
+            dlclose(global_data.dlhandle);
         }
 
         if (ctx->coord.global_idx == 0) {
@@ -1753,7 +1767,8 @@ static int atl_ofi_nic_already_used(const struct fi_info* prov,
 static int atl_ofi_is_nic_local(struct fi_info* info) {
     if (info->nic->bus_attr->bus_type == FI_BUS_PCI) {
         struct fi_pci_attr pci = info->nic->bus_attr->attr.pci;
-        return hwloc_is_dev_close_by_pci(pci.domain_id, pci.bus_id, pci.device_id, pci.function_id);
+        return ccl::global_data::get().hwloc_wrapper->is_dev_close_by_pci(
+            pci.domain_id, pci.bus_id, pci.device_id, pci.function_id);
     }
     return 0;
 }
@@ -1860,10 +1875,7 @@ static atl_status_t atl_ofi_init(int* argc,
     atl_ofi_prov_t* prov = NULL;
     char *max_retry_count_env = NULL, *progress_mode_env = NULL;
     int open_nw_provs = 1;
-
-    if ((attr->mnic_type != ATL_MNIC_NONE) && !hwloc_is_initialized()) {
-        CCL_THROW_IF_NOT(hwloc_init() == HWLOC_SUCCESS, "failed to initialize hwloc");
-    }
+    int enable_shm = 0;
 
     CCL_THROW_IF_NOT((sizeof(atl_ofi_req_t) <= sizeof(atl_req_t) - offsetof(atl_req_t, internal)),
                      "unexpected offset: atl_ofi_request size ",
@@ -1891,8 +1903,8 @@ static atl_status_t atl_ofi_init(int* argc,
 
     ctx->ops = &atl_ofi_ops;
     ctx->mr_ops = &atl_ofi_mr_ops;
-    ctx->ep_count = attr->ep_count;
-    ctx->eps = (atl_ep**)calloc(1, sizeof(void*) * attr->ep_count);
+    ctx->ep_count = attr->in.ep_count;
+    ctx->eps = (atl_ep**)calloc(1, sizeof(void*) * attr->in.ep_count);
     if (!ctx->eps)
         goto err;
 
@@ -1939,7 +1951,7 @@ static atl_status_t atl_ofi_init(int* argc,
             goto err;
         }
 
-        if (!attr->enable_shm) {
+        if (!attr->in.enable_shm) {
             LOG_ERROR(
                 "shm provider is requested through FI_PROVIDER but not requested from CCL level");
             goto err;
@@ -1948,12 +1960,13 @@ static atl_status_t atl_ofi_init(int* argc,
 
     atl_ofi_print_coord(coord);
 
-    if (attr->enable_shm) {
+    enable_shm = attr->in.enable_shm;
+    if (enable_shm) {
         prov_hints = fi_dupinfo(base_hints);
         prov_hints->fabric_attr->prov_name = strdup(ATL_OFI_SHM_PROV_NAME);
         ret = fi_getinfo(fi_version, NULL, NULL, 0ULL, prov_hints, &prov_list);
         if (ret || !prov_list) {
-            attr->enable_shm = 0;
+            enable_shm = 0;
             LOG_INFO("shm provider is requested but not available");
         }
         else {
@@ -1967,22 +1980,24 @@ static atl_status_t atl_ofi_init(int* argc,
         prov_hints = NULL;
     }
 
-    attr->tag_bits = 64;
-    attr->max_tag = 0xFFFFFFFFFFFFFFFF;
-    attr->enable_rma = 0;
-    attr->max_order_waw_size = 0;
-
     ofi_ctx->prov_count = 0;
     ofi_ctx->nw_prov_count = 0;
     ofi_ctx->shm_prov_idx = 0;
-    ofi_ctx->nw_prov_first_idx = (attr->enable_shm) ? 1 : 0;
-    ofi_ctx->mnic_type = attr->mnic_type;
-    ofi_ctx->mnic_count = std::min(attr->mnic_count, (size_t)(ATL_OFI_MAX_NW_PROV_COUNT));
-    ofi_ctx->mnic_count = std::min(ofi_ctx->mnic_count, attr->ep_count);
+    ofi_ctx->nw_prov_first_idx = (enable_shm) ? 1 : 0;
+    ofi_ctx->mnic_type = attr->in.mnic_type;
+    ofi_ctx->mnic_count = std::min(attr->in.mnic_count, (size_t)(ATL_OFI_MAX_NW_PROV_COUNT));
+    ofi_ctx->mnic_count = std::min(ofi_ctx->mnic_count, attr->in.ep_count);
     ofi_ctx->mnic_count = std::max(ofi_ctx->mnic_count, (size_t)(1));
 
+    if ((ofi_ctx->mnic_type != ATL_MNIC_NONE) &&
+        !ccl::global_data::get().hwloc_wrapper->is_initialized()) {
+        ofi_ctx->mnic_type = ATL_MNIC_NONE;
+        ofi_ctx->mnic_count = 1;
+        LOG_WARN("hwloc is not initialized, disable multi-nic")
+    }
+
     /* open SHM provider */
-    if (attr->enable_shm) {
+    if (enable_shm) {
         prov_idx = ofi_ctx->shm_prov_idx;
         prov_name = strdup(ATL_OFI_SHM_PROV_NAME);
         prov = &ofi_ctx->provs[prov_idx];
@@ -1996,7 +2011,7 @@ static atl_status_t atl_ofi_init(int* argc,
     }
 
     /* open NW provider(s) */
-    if (prov_env && !strcmp(prov_env, ATL_OFI_SHM_PROV_NAME) && attr->enable_shm) {
+    if (prov_env && !strcmp(prov_env, ATL_OFI_SHM_PROV_NAME) && enable_shm) {
         open_nw_provs = 0;
     }
 
@@ -2023,7 +2038,7 @@ static atl_status_t atl_ofi_init(int* argc,
         ep->comp_ops = &atl_ofi_ep_comp_ops;
 
         ofi_ep->active_prov_count = 0;
-        if (attr->enable_shm) {
+        if (enable_shm) {
             ofi_ep->active_prov_idxs[ofi_ep->active_prov_count] = ofi_ctx->shm_prov_idx;
             ofi_ep->active_prov_count++;
         }
@@ -2084,6 +2099,16 @@ static atl_status_t atl_ofi_init(int* argc,
 
     fi_freeinfo(base_hints);
     base_hints = NULL;
+
+    /* report actual attributes back to upper level */
+    attr->out.enable_shm = enable_shm;
+    attr->out.enable_rma = 0;
+    attr->out.enable_device_buf = 0;
+    attr->out.mnic_type = ofi_ctx->mnic_type;
+    attr->out.mnic_count = ofi_ctx->mnic_count;
+    attr->out.tag_bits = 64;
+    attr->out.max_tag = 0xFFFFFFFFFFFFFFFF;
+    attr->out.max_order_waw_size = 0;
 
     return ATL_STATUS_SUCCESS;
 

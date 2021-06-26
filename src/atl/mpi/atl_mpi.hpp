@@ -13,6 +13,8 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#ifdef CCL_ENABLE_MPI
+
 #include "atl.h"
 
 class atl_mpi final : public iatl {
@@ -24,7 +26,7 @@ public:
 
     atl_status_t atl_init(int* argc,
                           char*** argv,
-                          atl_attr_t* att,
+                          atl_attr_t* attr,
                           const char* main_addr,
                           std::unique_ptr<ipmi>& pmi) override;
 
@@ -159,3 +161,5 @@ private:
     bool is_finalized{ false };
     bool inited{ false };
 };
+
+#endif /* CCL_ENABLE_MPI */

@@ -120,16 +120,6 @@ ccl_request* ccl_allreduce_impl(const void* send_buf,
                                 ccl_comm* comm,
                                 const ccl_stream* stream,
                                 const std::vector<ccl::event>& deps);
-template <class gpu_device_type>
-ccl_request* ccl_allreduce_gpu_impl(const void* send_buf,
-                                    void* recv_buf,
-                                    size_t count,
-                                    ccl::datatype dtype,
-                                    ccl::reduction reduction,
-                                    const ccl_coll_attr& attr,
-                                    ccl_comm* comm,
-                                    const ccl_stream* stream,
-                                    const std::vector<ccl::event>& deps);
 
 ccl_request* ccl_alltoall_impl(const void* send_buf,
                                void* recv_buf,

@@ -73,6 +73,7 @@ message(STATUS "FT COMPUTE_BACKEND: ${COMPUTE_BACKEND}")
 if (${CMAKE_VERSION} VERSION_LESS 3.1)
 #cmake version below 3.1 does not support CMAKE_C[XX}_STANDARD flags
 #set manually
+# TODO: Need to handle c++17 option for older cmake
     set(CXX_COMPILER_FLAGS "-std=gnu++11")
     set(C_COMPILER_FLAGS "-std=gnu99")
 endif()
@@ -89,13 +90,15 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CXX_COMPILER_FLAGS} -Wall -Werror -D_G
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${CXX_COMPILER_FLAGS} -O0 -g -DENABLE_DEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${CXX_COMPILER_FLAGS} -O3")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} ${CXX_COMPILER_FLAGS} -O2 -g")
-set(CMAKE_CXX_STANDARD 17)
+# C++ standard version is set by set_compute_backend/activate_compute_backend, so no need to set it here
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (COMPUTE_BACKEND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPUTE_BACKEND_FLAGS}")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${COMPUTE_BACKEND_LIBRARIES}")
 endif()
+
+link_directories(${EXAMPLES_LIB_DIRS})
 
 foreach(src ${sources})
     get_filename_component(executable ${src} NAME_WE)
@@ -106,6 +109,7 @@ foreach(src ${sources})
     if (${executable} MATCHES ".*bcast.*")
         target_compile_definitions(${executable} PRIVATE TEST_CCL_BCAST)
     endif()
+    target_include_directories(${executable} PRIVATE ${EXAMPLES_INC_DIRS})
     target_link_libraries(${executable} PUBLIC gtest_main)
     target_link_libraries(${executable} PUBLIC gtest)
     target_link_libraries(${executable} PRIVATE ccl)
@@ -163,3 +167,8 @@ endforeach()
 foreach(algo direct; ring)
 add_test (NAME reduce_scatter_${algo} CONFIGURATIONS reduce_scatter_${algo} COMMAND mpiexec.hydra -l -n 2 -ppn 1 ${CCL_INSTALL_TESTS}/reduce_scatter_test --gtest_output=xml:${CCL_INSTALL_TESTS}/reduce_scatter_${algo}_report.junit.xml)
 endforeach()
+
+if (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
+    # right now all regression tests require dpcpp, might be changed in the future
+    add_subdirectory(regression)
+endif()

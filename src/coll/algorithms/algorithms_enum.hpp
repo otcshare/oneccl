@@ -114,7 +114,10 @@ enum ccl_coll_type {
     ccl_coll_reduce,
     ccl_coll_reduce_scatter,
     ccl_coll_sparse_allreduce,
+    ccl_coll_last_regular = ccl_coll_sparse_allreduce,
+
     ccl_coll_internal,
+    ccl_coll_partial,
 
     ccl_coll_last_value
 };
@@ -158,7 +161,9 @@ enum ccl_coll_reduction {
     ccl::reduction::sum, ccl::reduction::prod, ccl::reduction::min, \
         ccl::reduction::max /*, ccl::reduction::custom*/
 
-using ccl_reductions = utils::enum_to_str<static_cast<int>(ccl::reduction::custom)>;
+using ccl_reductions =
+    utils::enum_to_str<static_cast<typename std::underlying_type<ccl::reduction>::type>(
+        ccl::reduction::custom)>;
 inline const std::string reduction_to_str(ccl::reduction reduction_type) {
     return ccl_reductions({ "sum", "prod", "min", "max" }).choose(reduction_type, "INVALID_VALUE");
 }

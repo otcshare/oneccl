@@ -42,20 +42,22 @@ size_t ccl_executor::calculate_atl_ep_count(size_t worker_count) {
 
 atl_attr_t ccl_executor::generate_atl_attr(const ccl::env_data& env) {
     atl_attr_t attr;
-
-    attr.ep_count = calculate_atl_ep_count(env.worker_count);
-    attr.enable_shm = env.enable_shm;
+    attr.in.enable_shm = env.enable_shm;
     /*
         TODO:
         executor may be destroyed before cached rma-based schedule made memory deregistration
         need to refactor global objects dependencies
         don't use ring_rma till that
     */
-    attr.enable_rma = 0; // env.enable_rma;
-    attr.sync_coll = env.sync_coll;
-    attr.extra_ep = env.extra_ep;
-    attr.mnic_type = env.mnic_type;
-    attr.mnic_count = env.mnic_count;
+    attr.in.enable_rma = 0; // env.enable_rma;
+    attr.in.enable_device_buf = env.enable_device_buf;
+    attr.in.enable_sync_coll = env.enable_sync_coll;
+    attr.in.enable_extra_ep = env.enable_extra_ep;
+    attr.in.ep_count = calculate_atl_ep_count(env.worker_count);
+    attr.in.mnic_type = env.mnic_type;
+    attr.in.mnic_count = env.mnic_count;
+
+    memset(&attr.out, 0, sizeof(attr.out));
 
     return attr;
 }
@@ -84,6 +86,7 @@ void ccl_executor::start_workers(size_t proc_idx, size_t proc_count) {
     set_local_coord(proc_idx, proc_count);
     auto& env = ccl::global_data::env();
     CCL_THROW_IF_NOT(env.env_2_worker_affinity(get_local_proc_idx(), get_local_proc_count()));
+    CCL_THROW_IF_NOT(env.env_2_worker_mem_affinity());
     start_workers();
 }
 
@@ -114,18 +117,23 @@ void ccl_executor::start_workers() {
         }
 
         if (env.worker_offload) {
-            size_t affinity = env.worker_affinity[get_local_proc_idx() * worker_count + idx];
+            size_t cpu_affinity = env.worker_affinity[get_local_proc_idx() * worker_count + idx];
+            size_t mem_affinity =
+                env.worker_mem_affinity[get_local_proc_idx() * worker_count + idx];
 
-            CCL_THROW_IF_NOT(workers.back()->start(affinity) == ccl::status::success,
-                             "failed to start worker # ",
-                             idx);
+            CCL_THROW_IF_NOT(
+                workers.back()->start(cpu_affinity, mem_affinity) == ccl::status::success,
+                "failed to start worker # ",
+                idx);
 
             LOG_DEBUG("started worker: local_proc_idx ",
                       get_local_proc_idx(),
                       ", worker_idx ",
                       idx,
-                      ", affinity ",
-                      affinity);
+                      ", cpu: ",
+                      cpu_affinity,
+                      ", numa: ",
+                      mem_affinity);
         }
     }
     workers_started = true;

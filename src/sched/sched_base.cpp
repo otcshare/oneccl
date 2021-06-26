@@ -13,6 +13,9 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#include <numeric>
+
+#include "coll/algorithms/algorithms_enum.hpp"
 #include "coll/coll_param.hpp"
 #include "common/global/global.hpp"
 #include "sched/sched_base.hpp"
@@ -33,45 +36,46 @@ void ccl_sched_base::set_coll_attr(const ccl_coll_attr& attr) {
 void ccl_sched_base::update_coll_param_and_attr(const ccl_coll_param& param,
                                                 const ccl_coll_attr& attr) {
 #ifdef CCL_ENABLE_SYCL
-    copy_deps(param.deps, coll_param.deps);
-    if (param.stream && param.stream->is_sycl_device_stream()) {
-        coll_param.sycl_buf = static_cast<ccl_sycl_buffer_t*>(param.buf);
-        coll_param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-        coll_param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
+    coll_param.copy_deps(param.deps);
+#endif /* CCL_ENABLE_SYCL */
+
+    bool has_pre_post_copies =
+        (!coll_param.device_send_bufs.empty() || !coll_param.device_recv_bufs.empty()) ? true
+                                                                                       : false;
+
+    if (has_pre_post_copies) {
+        CCL_THROW_IF_NOT(coll_param.device_send_bufs.size() == param.send_bufs.size(),
+                         "send_bufs sizes mismatch");
+        CCL_THROW_IF_NOT(coll_param.device_recv_bufs.size() == param.recv_bufs.size(),
+                         "recv_bufs sizes mismatch");
+        coll_param.device_send_bufs = param.send_bufs;
+        coll_param.device_recv_bufs = param.recv_bufs;
     }
     else {
-#endif /* CCL_ENABLE_SYCL */
-        coll_param.buf = param.buf;
-        coll_param.send_buf = param.send_buf;
-        coll_param.recv_buf = param.recv_buf;
-#ifdef CCL_ENABLE_SYCL
+        CCL_THROW_IF_NOT(coll_param.send_bufs.size() == param.send_bufs.size(),
+                         "send_bufs sizes mismatch");
+        CCL_THROW_IF_NOT(coll_param.recv_bufs.size() == param.recv_bufs.size(),
+                         "recv_bufs sizes mismatch");
+        coll_param.send_bufs = param.send_bufs;
+        coll_param.recv_bufs = param.recv_bufs;
     }
-#endif /* CCL_ENABLE_SYCL */
+
+    int comm_size = coll_param.comm->size();
 
     if (coll_param.ctype == ccl_coll_allgatherv) {
-        coll_param.recv_counts = param.recv_counts;
-        CCL_THROW_IF_NOT((int)coll_param_copy.ag_recv_counts.size() == coll_param.comm->size());
-        coll_param_copy.ag_recv_counts.assign((size_t*)param.recv_counts,
-                                              (size_t*)param.recv_counts + coll_param.comm->size());
-
-        if (coll_attr.vector_buf) {
-            CCL_THROW_IF_NOT((int)coll_param_copy.ag_recv_bufs.size() == coll_param.comm->size());
-            coll_param_copy.ag_recv_bufs.assign((void**)param.recv_buf,
-                                                (void**)param.recv_buf + coll_param.comm->size());
-        }
+        if (coll_attr.vector_buf)
+            CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_bufs.size()) == comm_size);
+        CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_counts.size()) == comm_size);
     }
 
     if (coll_param.ctype == ccl_coll_alltoallv) {
-        coll_param.send_counts = param.send_counts;
-        coll_param.recv_counts = param.recv_counts;
+        if (coll_attr.vector_buf)
+            CCL_THROW_IF_NOT(static_cast<int>(coll_param.send_bufs.size()) == comm_size);
+        CCL_THROW_IF_NOT(static_cast<int>(coll_param.send_counts.size()) == comm_size);
 
-        CCL_THROW_IF_NOT((int)coll_param_copy.a2av_send_counts.size() == coll_param.comm->size());
-        CCL_THROW_IF_NOT((int)coll_param_copy.a2av_recv_counts.size() == coll_param.comm->size());
-
-        coll_param_copy.a2av_send_counts.assign(
-            (size_t*)param.send_counts, (size_t*)param.send_counts + coll_param.comm->size());
-        coll_param_copy.a2av_recv_counts.assign(
-            (size_t*)param.recv_counts, (size_t*)param.recv_counts + coll_param.comm->size());
+        if (coll_attr.vector_buf)
+            CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_bufs.size()) == comm_size);
+        CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_counts.size()) == comm_size);
     }
 
     if (coll_param.ctype == ccl_coll_sparse_allreduce) {
@@ -108,7 +112,7 @@ ccl_buffer ccl_sched_base::alloc_buffer(size_t bytes) {
     CCL_THROW_IF_NOT(bytes > 0, "incorrect buffer size: ", bytes);
 
     ccl_buffer buffer =
-        ccl_buffer(CCL_CALLOC(bytes, "sched_buffer"), bytes, 0, ccl_buffer_type::DIRECT);
+        ccl_buffer(CCL_MALLOC(bytes, "sched_buffer"), bytes, 0, ccl_buffer_type::DIRECT);
     memory.buf_list.emplace_back(buffer, bytes);
     CCL_THROW_IF_NOT(buffer.get_ptr(), "null ptr");
 
@@ -117,7 +121,6 @@ ccl_buffer ccl_sched_base::alloc_buffer(size_t bytes) {
 }
 
 #ifdef CCL_ENABLE_SYCL
-
 ccl_buffer ccl_sched_base::alloc_staging_buffer(size_t bytes) {
     LOG_DEBUG("try to allocate usm host buffer size: ", bytes);
     CCL_THROW_IF_NOT(bytes > 0, "incorrect buffer size: ", bytes);
@@ -254,91 +257,66 @@ void ccl_sched_base::add_memory_region(atl_mr_t* mr) {
     memory.mr_list.emplace_back(mr);
 }
 
-void ccl_sched_base::alloc_buffers_for_sycl_copy() {
-#ifdef CCL_ENABLE_SYCL
-
+void ccl_sched_base::get_pre_post_copy_counts(std::vector<size_t>& d2h_counts,
+                                              std::vector<size_t>& h2d_counts,
+                                              bool& reuse_buffers) {
     ccl_coll_param& param = coll_param;
-    if (!param.stream || (!param.stream->is_sycl_device_stream()))
-        return;
 
-    LOG_DEBUG("alloc tmp buffers for D2H and H2D copies, coll_type ",
-              ccl_coll_type_to_str(param.ctype),
-              ", dtype_size ",
-              param.dtype.size(),
-              ", comm_size ",
-              param.comm->size(),
-              ", count ",
-              param.count);
-
-    void* ptr_to_check = (param.ctype == ccl_coll_bcast) ? param.buf : (void*)param.send_buf;
-    auto ptr_type =
-        sycl::get_pointer_type(ptr_to_check, param.stream->get_native_stream().get_context());
-    if (ptr_type == sycl::usm::alloc::shared) {
-        param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-        param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-        param.sycl_buf = static_cast<ccl_sycl_buffer_t*>(param.buf);
-        return;
-    }
-
-    size_t idx, send_count = 0, recv_count = 0;
+    d2h_counts.clear();
+    h2d_counts.clear();
+    reuse_buffers = false;
 
     switch (param.ctype) {
         case ccl_coll_allgatherv:
-            param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-            param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-            param.send_buf = alloc_staging_buffer(param.send_count * param.dtype.size()).get_ptr();
-            for (idx = 0; idx < param.comm->size(); idx++)
-                recv_count += param.recv_counts[idx];
-            param.recv_buf = alloc_staging_buffer(recv_count * param.dtype.size()).get_ptr();
-            break;
-        case ccl_coll_allreduce:
-            param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-            param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-            param.send_buf = alloc_staging_buffer(param.count * param.dtype.size()).get_ptr();
-            param.recv_buf = alloc_staging_buffer(param.count * param.dtype.size()).get_ptr();
-            break;
-        case ccl_coll_alltoall:
-            param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-            param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-            param.send_buf =
-                alloc_staging_buffer(param.count * param.dtype.size() * param.comm->size())
-                    .get_ptr();
-            param.recv_buf =
-                alloc_staging_buffer(param.count * param.dtype.size() * param.comm->size())
-                    .get_ptr();
-            break;
-        case ccl_coll_alltoallv:
-            param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-            param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-            for (idx = 0; idx < param.comm->size(); idx++) {
-                send_count += param.send_counts[idx];
-                recv_count += param.recv_counts[idx];
-            }
-            param.send_buf = alloc_staging_buffer(send_count * param.dtype.size()).get_ptr();
-            param.recv_buf = alloc_staging_buffer(recv_count * param.dtype.size()).get_ptr();
-            break;
-        case ccl_coll_bcast:
-            param.sycl_buf = static_cast<ccl_sycl_buffer_t*>(param.buf);
-            param.buf = alloc_staging_buffer(param.count * param.dtype.size()).get_ptr();
-            break;
-        case ccl_coll_reduce:
-            param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)(param.send_buf));
-            param.send_buf = alloc_staging_buffer(param.count * param.dtype.size()).get_ptr();
-            if (param.comm->rank() == param.root) {
-                param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-                param.recv_buf = alloc_staging_buffer(param.count * param.dtype.size()).get_ptr();
+            d2h_counts.push_back(param.get_send_count());
+            if (param.recv_bufs.size() > 1) {
+                h2d_counts.insert(
+                    h2d_counts.end(), param.recv_counts.begin(), param.recv_counts.end());
             }
             else {
-                param.recv_buf = nullptr;
+                h2d_counts.push_back(
+                    std::accumulate(param.recv_counts.begin(), param.recv_counts.end(), 0));
             }
             break;
+        case ccl_coll_allreduce:
+            d2h_counts.push_back(param.get_send_count());
+            h2d_counts.push_back(param.get_recv_count());
+            /* use in-place to avoid allocation of extra staging buffer*/
+            reuse_buffers = true;
+            break;
+        case ccl_coll_alltoall:
+            d2h_counts.push_back(param.get_send_count() * param.comm->size());
+            h2d_counts.push_back(param.get_recv_count() * param.comm->size());
+            break;
+        case ccl_coll_alltoallv:
+            if (param.recv_bufs.size() > 1) {
+                /* expect that vector_buf is enabled for send/recv both */
+                d2h_counts.insert(
+                    d2h_counts.end(), param.send_counts.begin(), param.send_counts.end());
+                h2d_counts.insert(
+                    h2d_counts.end(), param.recv_counts.begin(), param.recv_counts.end());
+            }
+            else {
+                d2h_counts.push_back(
+                    std::accumulate(param.send_counts.begin(), param.send_counts.end(), 0));
+                h2d_counts.push_back(
+                    std::accumulate(param.recv_counts.begin(), param.recv_counts.end(), 0));
+            }
+            break;
+        case ccl_coll_bcast:
+            if (param.comm->rank() == param.root)
+                d2h_counts.push_back(param.get_send_count());
+            h2d_counts.push_back(param.get_recv_count());
+            reuse_buffers = true;
+            break;
+        case ccl_coll_reduce:
+            d2h_counts.push_back(param.get_send_count());
+            if (param.comm->rank() == param.root)
+                h2d_counts.push_back(param.get_recv_count());
+            break;
         case ccl_coll_reduce_scatter:
-            param.sycl_send_buf = static_cast<ccl_sycl_buffer_t*>((void*)param.send_buf);
-            param.sycl_recv_buf = static_cast<ccl_sycl_buffer_t*>(param.recv_buf);
-            param.send_buf =
-                alloc_staging_buffer(param.count * param.comm->size() * param.dtype.size())
-                    .get_ptr();
-            param.recv_buf = alloc_staging_buffer(param.count * param.dtype.size()).get_ptr();
+            d2h_counts.push_back(param.get_send_count());
+            h2d_counts.push_back(param.get_recv_count());
             break;
         case ccl_coll_sparse_allreduce:
             CCL_FATAL("SYCL stream is not supported for sparse_allreduce yet");
@@ -346,6 +324,104 @@ void ccl_sched_base::alloc_buffers_for_sycl_copy() {
             break;
         default: break;
     }
+}
+
+void ccl_sched_base::alloc_buffers_for_pre_post_copy() {
+#ifdef CCL_ENABLE_SYCL
+
+    ccl_coll_param& param = coll_param;
+
+    param.device_send_bufs.clear();
+    param.device_recv_bufs.clear();
+
+    if (!param.stream || (!param.stream->is_sycl_device_stream()))
+        return;
+
+    bool should_alloc_buffers = true;
+
+    if (!coll_attr.is_sycl_buffer) {
+        auto bufs = param.get_all_non_zero_bufs();
+        if (!bufs.empty()) {
+            auto usm_type =
+                sycl::get_pointer_type(bufs[0], param.stream->get_native_stream().get_context());
+            if ((usm_type == sycl::usm::alloc::host) || (usm_type == sycl::usm::alloc::shared) ||
+                ((usm_type == sycl::usm::alloc::device) &&
+                 atl_wrapper::attr.out.enable_device_buf)) {
+                should_alloc_buffers = false;
+            }
+        }
+    }
+
+    LOG_DEBUG("coll_type ", param.ctype, ", should_alloc_buffers ", should_alloc_buffers);
+
+    if (!should_alloc_buffers) {
+        return;
+    }
+
+    /*
+        move user-supplied pointers into device_* fields
+        they will be used further for pre-post copies
+    */
+    param.device_send_bufs = param.send_bufs;
+    param.device_recv_bufs = param.recv_bufs;
+
+    std::vector<size_t> d2h_counts;
+    std::vector<size_t> h2d_counts;
+    bool reuse_buffers;
+    get_pre_post_copy_counts(d2h_counts, h2d_counts, reuse_buffers);
+
+    LOG_DEBUG("alloc tmp buffers for D2H and H2D copies, coll_type ",
+              ccl_coll_type_to_str(param.ctype),
+              ", dtype_size ",
+              param.dtype.size(),
+              ", comm_size ",
+              param.comm->size(),
+              ", d2h_counts_size ",
+              d2h_counts.size(),
+              ", h2d_counts_size ",
+              h2d_counts.size(),
+              ", reuse_buffers ",
+              reuse_buffers);
+
+    if (reuse_buffers) {
+        /* keep only single vector with counts */
+        if (d2h_counts.size() < h2d_counts.size())
+            d2h_counts = h2d_counts;
+        h2d_counts.clear();
+    }
+
+    for (size_t idx = 0; idx < d2h_counts.size(); idx++) {
+        if (d2h_counts[idx])
+            param.send_bufs[idx] =
+                alloc_staging_buffer(d2h_counts[idx] * param.dtype.size()).get_ptr();
+        else
+            param.send_bufs[idx] = nullptr;
+    }
+
+    for (size_t idx = 0; idx < h2d_counts.size(); idx++) {
+        if (h2d_counts[idx])
+            param.recv_bufs[idx] =
+                alloc_staging_buffer(h2d_counts[idx] * param.dtype.size()).get_ptr();
+        else
+            param.recv_bufs[idx] = nullptr;
+    }
+
+    if (reuse_buffers) {
+        param.recv_bufs = param.send_bufs;
+    }
+
+    CCL_THROW_IF_NOT(param.send_bufs.size() == param.device_send_bufs.size(),
+                     "send_bufs.size() mismatch: ",
+                     param.send_bufs.size(),
+                     " vs ",
+                     param.device_send_bufs.size());
+
+    CCL_THROW_IF_NOT(param.recv_bufs.size() == param.device_recv_bufs.size(),
+                     "recv_bufs.size() mismatch: ",
+                     param.recv_bufs.size(),
+                     " vs ",
+                     param.device_recv_bufs.size());
+
 #endif /* CCL_ENABLE_SYCL */
 }
 

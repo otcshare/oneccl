@@ -14,6 +14,7 @@
  limitations under the License.
 */
 #pragma once
+
 #include "common/comm/host_communicator/host_communicator.hpp"
 
 #include "oneapi/ccl/native_device_api/interop_utils.hpp"
@@ -42,7 +43,7 @@ ccl::event host_communicator::allgatherv_impl(const buffer_type* send_buf,
                                            ccl::native_type_info<buffer_type>::dtype,
                                            attr,
                                            comm_impl.get(),
-                                           nullptr,
+                                           get_stream_ptr(stream),
                                            deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -66,7 +67,7 @@ ccl::event host_communicator::allgatherv_impl(const buffer_type* send_buf,
                                            ccl::native_type_info<buffer_type>::dtype,
                                            internal_attr,
                                            comm_impl.get(),
-                                           nullptr,
+                                           get_stream_ptr(stream),
                                            deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -80,23 +81,45 @@ ccl::event host_communicator::allgatherv_impl(const buffer_type& send_buf,
                                               const ccl::stream::impl_value_t& stream,
                                               const ccl::allgatherv_attr& attr,
                                               const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_allgatherv_impl(reinterpret_cast<const void*>(&send_buf),
+                                           send_count,
+                                           reinterpret_cast<void*>(&recv_buf),
+                                           recv_counts.data(),
+                                           ccl::native_type_info<buffer_type>::dtype,
+                                           internal_attr,
+                                           comm_impl.get(),
+                                           get_stream_ptr(stream),
+                                           deps);
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 template <class buffer_type>
 ccl::event host_communicator::allgatherv_impl(
     const buffer_type& send_buf,
     size_t send_count,
-    ccl::vector_class<ccl::reference_wrapper_class<buffer_type>>& recv_buf,
+    ccl::vector_class<ccl::reference_wrapper_class<buffer_type>>& recv_bufs,
     const ccl::vector_class<size_t>& recv_counts,
     const ccl::stream::impl_value_t& stream,
     const ccl::allgatherv_attr& attr,
     const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.vector_buf = 1;
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_allgatherv_impl(reinterpret_cast<const void*>(&send_buf),
+                                           send_count,
+                                           (void*)(recv_bufs.data()),
+                                           recv_counts.data(),
+                                           ccl::native_type_info<buffer_type>::dtype,
+                                           internal_attr,
+                                           comm_impl.get(),
+                                           get_stream_ptr(stream),
+                                           deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 /* allreduce */
@@ -115,7 +138,7 @@ ccl::event host_communicator::allreduce_impl(const buffer_type* send_buf,
                                           reduction,
                                           attr,
                                           comm_impl.get(),
-                                          nullptr,
+                                          get_stream_ptr(stream),
                                           deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -129,9 +152,20 @@ ccl::event host_communicator::allreduce_impl(const buffer_type& send_buf,
                                              const ccl::stream::impl_value_t& stream,
                                              const ccl::allreduce_attr& attr,
                                              const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_allreduce_impl(reinterpret_cast<const void*>(&send_buf),
+                                          reinterpret_cast<void*>(&recv_buf),
+                                          count,
+                                          ccl::native_type_info<buffer_type>::dtype,
+                                          reduction,
+                                          internal_attr,
+                                          comm_impl.get(),
+                                          get_stream_ptr(stream),
+                                          deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 /* alltoall */
@@ -148,7 +182,7 @@ ccl::event host_communicator::alltoall_impl(const buffer_type* send_buf,
                                          ccl::native_type_info<buffer_type>::dtype,
                                          attr,
                                          comm_impl.get(),
-                                         nullptr,
+                                         get_stream_ptr(stream),
                                          deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -161,7 +195,6 @@ ccl::event host_communicator::alltoall_impl(const ccl::vector_class<buffer_type*
                                             const ccl::stream::impl_value_t& stream,
                                             const ccl::alltoall_attr& attr,
                                             const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
     throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
     return {};
 }
@@ -173,9 +206,19 @@ ccl::event host_communicator::alltoall_impl(const buffer_type& send_buf,
                                             const ccl::stream::impl_value_t& stream,
                                             const ccl::alltoall_attr& attr,
                                             const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_alltoall_impl(reinterpret_cast<const void*>(&send_buf),
+                                         reinterpret_cast<void*>(&recv_buf),
+                                         count,
+                                         ccl::native_type_info<buffer_type>::dtype,
+                                         internal_attr,
+                                         comm_impl.get(),
+                                         get_stream_ptr(stream),
+                                         deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 template <class buffer_type>
@@ -186,7 +229,6 @@ ccl::event host_communicator::alltoall_impl(
     const ccl::stream::impl_value_t& stream,
     const ccl::alltoall_attr& attr,
     const ccl::vector_class<ccl::event>& dep) {
-    // TODO not implemented
     throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
     return {};
 }
@@ -207,7 +249,7 @@ ccl::event host_communicator::alltoallv_impl(const buffer_type* send_buf,
                                           ccl::native_type_info<buffer_type>::dtype,
                                           attr,
                                           comm_impl.get(),
-                                          nullptr,
+                                          get_stream_ptr(stream),
                                           deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -221,7 +263,6 @@ ccl::event host_communicator::alltoallv_impl(const ccl::vector_class<buffer_type
                                              const ccl::stream::impl_value_t& stream,
                                              const ccl::alltoallv_attr& attr,
                                              const ccl::vector_class<ccl::event>& dep) {
-    // TODO not implemented
     throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
     return {};
 }
@@ -234,10 +275,22 @@ ccl::event host_communicator::alltoallv_impl(const buffer_type& send_buf,
                                              const ccl::stream::impl_value_t& stream,
                                              const ccl::alltoallv_attr& attr,
                                              const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_alltoallv_impl(reinterpret_cast<const void*>(&send_buf),
+                                          send_counts.data(),
+                                          reinterpret_cast<void*>(&recv_buf),
+                                          recv_counts.data(),
+                                          ccl::native_type_info<buffer_type>::dtype,
+                                          internal_attr,
+                                          comm_impl.get(),
+                                          get_stream_ptr(stream),
+                                          deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
+
 template <class buffer_type>
 ccl::event host_communicator::alltoallv_impl(
     const ccl::vector_class<ccl::reference_wrapper_class<buffer_type>>& send_buf,
@@ -247,7 +300,6 @@ ccl::event host_communicator::alltoallv_impl(
     const ccl::stream::impl_value_t& stream,
     const ccl::alltoallv_attr& attr,
     const ccl::vector_class<ccl::event>& dep) {
-    // TODO not implemented
     throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
     return {};
 }
@@ -266,7 +318,7 @@ ccl::event host_communicator::broadcast_impl(buffer_type* buf,
                                           root,
                                           attr,
                                           comm_impl.get(),
-                                          nullptr,
+                                          get_stream_ptr(stream),
                                           deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -279,9 +331,19 @@ ccl::event host_communicator::broadcast_impl(buffer_type& buf,
                                              const ccl::stream::impl_value_t& stream,
                                              const ccl::broadcast_attr& attr,
                                              const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_broadcast_impl(reinterpret_cast<void*>(&buf),
+                                          count,
+                                          ccl::native_type_info<buffer_type>::dtype,
+                                          root,
+                                          internal_attr,
+                                          comm_impl.get(),
+                                          get_stream_ptr(stream),
+                                          deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 /* reduce */
@@ -302,7 +364,7 @@ ccl::event host_communicator::reduce_impl(const buffer_type* send_buf,
                                        root,
                                        attr,
                                        comm_impl.get(),
-                                       nullptr,
+                                       get_stream_ptr(stream),
                                        deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -317,9 +379,21 @@ ccl::event host_communicator::reduce_impl(const buffer_type& send_buf,
                                           const ccl::stream::impl_value_t& stream,
                                           const ccl::reduce_attr& attr,
                                           const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_reduce_impl(reinterpret_cast<const void*>(&send_buf),
+                                       reinterpret_cast<void*>(&recv_buf),
+                                       count,
+                                       ccl::native_type_info<buffer_type>::dtype,
+                                       reduction,
+                                       root,
+                                       internal_attr,
+                                       comm_impl.get(),
+                                       get_stream_ptr(stream),
+                                       deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 /* reduce_scatter */
@@ -338,7 +412,7 @@ ccl::event host_communicator::reduce_scatter_impl(const buffer_type* send_buf,
                                                reduction,
                                                attr,
                                                comm_impl.get(),
-                                               nullptr,
+                                               get_stream_ptr(stream),
                                                deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -352,9 +426,20 @@ ccl::event host_communicator::reduce_scatter_impl(const buffer_type& send_buf,
                                                   const ccl::stream::impl_value_t& stream,
                                                   const ccl::reduce_scatter_attr& attr,
                                                   const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-    return {};
+    ccl_coll_attr internal_attr(attr);
+    internal_attr.is_sycl_buffer = 1;
+
+    ccl_request* req = ccl_reduce_scatter_impl(reinterpret_cast<const void*>(&send_buf),
+                                               reinterpret_cast<void*>(&recv_buf),
+                                               recv_count,
+                                               ccl::native_type_info<buffer_type>::dtype,
+                                               reduction,
+                                               internal_attr,
+                                               comm_impl.get(),
+                                               get_stream_ptr(stream),
+                                               deps);
+
+    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
 }
 
 /* sparse_allreduce */
@@ -384,7 +469,7 @@ ccl::event host_communicator::sparse_allreduce_impl(const index_buffer_type* sen
                                                  reduction,
                                                  attr,
                                                  comm_impl.get(),
-                                                 nullptr,
+                                                 get_stream_ptr(stream),
                                                  deps);
 
     return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
@@ -403,7 +488,6 @@ ccl::event host_communicator::sparse_allreduce_impl(const index_buffer_container
                                                     const ccl::stream::impl_value_t& stream,
                                                     const ccl::sparse_allreduce_attr& attr,
                                                     const ccl::vector_class<ccl::event>& deps) {
-    // TODO not implemented
     throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
     return {};
 }

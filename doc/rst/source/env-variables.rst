@@ -483,7 +483,7 @@ CCL_WORKER_AFFINITY
 
 :: 
 
-  CCL_WORKER_AFFINITY=<proclist>
+  CCL_WORKER_AFFINITY=<cpulist>
 
 **Arguments**
 
@@ -492,7 +492,7 @@ CCL_WORKER_AFFINITY
    :header-rows: 1
    :align: left
    
-   * - <proclist> 
+   * - <cpulist> 
      - Description
    * - ``auto``
      - Workers are automatically pinned to last cores of pin domain.
@@ -505,6 +505,33 @@ CCL_WORKER_AFFINITY
 **Description**
 
 Set this environment variable to specify cpu affinity for |product_short| worker threads.
+
+
+CCL_WORKER_MEM_AFFINITY
+#######################
+**Syntax**
+
+:: 
+
+  CCL_WORKER_MEM_AFFINITY=<nodelist>
+
+**Arguments**
+
+.. list-table:: 
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+   
+   * - <nodelist> 
+     - Description
+   * - ``auto``
+     - Workers are automatically pinned to NUMA nodes that correspond to CPU affinity of workers.
+   * - ``n1,n2,..``
+     - NUMA nodes are explicitly specified for all local workers.
+
+**Description**
+
+Set this environment variable to specify memory affinity for |product_short| worker threads.
 
 
 CCL_LOG_LEVEL
@@ -556,3 +583,60 @@ CCL_MAX_SHORT_SIZE
 **Description**
 
 Set this environment variable to specify the threshold of the number of bytes for a collective operation to be split.
+
+
+CCL_MNIC
+########
+**Syntax**
+
+::
+
+  CCL_MNIC=<value>
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``global``
+     - Select all NICs available on the node.
+   * - ``local``
+     - Select all NICs local for the NUMA node that corresponds to process pinning.
+   * - ``none``
+     - Disable special NIC selection, use a single default NIC (**default**).
+
+**Description**
+
+Set this environment variable to control multi-NIC selection policy.
+|product_short| workers will be pinned on selected NICs in a round-robin way.
+
+
+CCL_MNIC_COUNT
+##############
+**Syntax**
+
+::
+
+  CCL_MNIC_COUNT=<value>
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``N``
+     - The maximum number of NICs that should be selected for |product_short| workers.
+       If not specified then equal to the number of |product_short| workers.
+
+**Description**
+
+Set this environment variable to specify the maximum number of NICs to be selected.
+The actual number of NICs selected may be smaller due to limitations on transport level or system configuration.
