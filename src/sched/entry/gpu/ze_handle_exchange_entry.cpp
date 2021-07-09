@@ -15,20 +15,17 @@
 */
 #include "ze_handle_exchange_entry.hpp"
 
-#if defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
 
-ze_handle_exchange_entry::ze_handle_exchange_entry(
-    ccl_sched *sched,
-    ccl_comm *comm,
-    std::vector<void *> in_buffers,
-    ze_context_handle_t context,
-    std::vector<std::vector<ze_ipc_mem_handle_t>> &out_handles)
+ze_handle_exchange_entry::ze_handle_exchange_entry(ccl_sched* sched,
+                                                   ccl_comm* comm,
+                                                   const std::vector<void*>& in_buffers,
+                                                   ze_context_handle_t context)
         : sched_entry(sched),
           comm(comm),
           in_buffers(in_buffers),
           context(context),
-          out_handles_ptr(&out_handles),
-          my_rank(comm->rank()),
+          rank(comm->rank()),
           comm_size(comm->size()),
           start_buf_idx(0),
           start_peer_idx(0),
@@ -36,15 +33,14 @@ ze_handle_exchange_entry::ze_handle_exchange_entry(
           is_accepted(false) {
     poll_fds.reserve(max_pfds);
 
-    if (out_handles.empty()) {
-        CCL_THROW("out_handles vector is empty");
-    }
-
     handles.resize(comm_size);
 
     for (size_t idx = 0; idx < comm_size; idx++) {
         handles[idx].resize(in_buffers.size());
     }
+
+    LOG_DEBUG(
+        name(), "entry: handles size: ", handles.size(), ", in_buffers size: ", in_buffers.size());
 }
 
 void ze_handle_exchange_entry::start() {
@@ -52,17 +48,17 @@ void ze_handle_exchange_entry::start() {
     std::ostringstream left_peer_ss_name;
 
     for (size_t buf_idx = 0; buf_idx < in_buffers.size(); buf_idx++) {
-        handles.at(my_rank).resize(in_buffers.size());
+        handles.at(rank).resize(in_buffers.size());
         ze_ipc_mem_handle_t handle;
 
-        if (get_handle(context, &handle, in_buffers[buf_idx])) {
-            CCL_THROW("get_handle get error");
-        }
-        handles[my_rank][buf_idx] = handle;
+        get_handle(context, in_buffers[buf_idx], &handle);
+        size_t mem_offset = get_mem_offset(context, in_buffers[buf_idx]);
+
+        handles[rank][buf_idx] = { handle, mem_offset };
     }
 
-    right_peer_ss_name << "ccl-sock." << ((my_rank - 1) + comm_size) % comm_size << "-w";
-    left_peer_ss_name << "ccl-sock." << my_rank << "-w";
+    right_peer_ss_name << "ccl-sock." << ((rank - 1) + comm_size) % comm_size << "-w";
+    left_peer_ss_name << "ccl-sock." << rank << "-w";
 
     right_peer_socket_name = right_peer_ss_name.str();
     left_peer_socket_name = left_peer_ss_name.str();
@@ -108,15 +104,15 @@ void ze_handle_exchange_entry::update() {
 
     for (size_t buf_idx = start_buf_idx; buf_idx < in_buffers.size(); buf_idx++) {
         for (int peer_idx = start_peer_idx; peer_idx < comm_size - 1; peer_idx++) {
-            int peer = ((my_rank + 1) + peer_idx) % comm_size;
+            int peer = (rank + 1 + peer_idx) % comm_size;
 
             if (peer_idx == 0) {
                 int send_fd = 0;
                 //invoke get_fd_from_handle to share with other processes
-                get_fd_from_handle(&(handles[my_rank][buf_idx]), &send_fd);
+                get_fd_from_handle(&(handles[rank][buf_idx].handle), &send_fd);
 
                 // first send to the right peer
-                sendmsg_call(right_peer_socket, send_fd);
+                sendmsg_call(right_peer_socket, send_fd, handles[rank][buf_idx].mem_offset);
             }
 
             int poll_ret = poll(&poll_fds[0], poll_fds.size(), timeout_ms);
@@ -132,17 +128,18 @@ void ze_handle_exchange_entry::update() {
                 int recv_fd = 0;
                 ze_ipc_mem_handle_t tmp_handle;
 
+                size_t mem_offset = 0;
                 // from left peer
-                recvmsg_call(left_peer_socket, &recv_fd);
+                recvmsg_call(left_peer_socket, recv_fd, mem_offset);
 
                 //invoke get_handle_from_fd to store the handle
                 get_handle_from_fd(&recv_fd, &tmp_handle);
 
-                handles[peer][buf_idx] = tmp_handle;
+                handles[peer][buf_idx] = { tmp_handle, mem_offset };
 
                 if (peer_idx < (comm_size - 2)) {
                     // send from left to the right
-                    sendmsg_call(right_peer_socket, recv_fd);
+                    sendmsg_call(right_peer_socket, recv_fd, mem_offset);
                 }
             }
             start_peer_idx++;
@@ -151,31 +148,35 @@ void ze_handle_exchange_entry::update() {
         start_buf_idx++;
     }
 
-    if (out_handles_ptr != nullptr) {
-        *out_handles_ptr = handles;
-    }
+    LOG_DEBUG(
+        name(), "entry: handles size: ", handles.size(), ", in_buffers size: ", in_buffers.size());
+
+    sched->get_ccl_sched_memory().handle_manager.set(handles);
     status = ccl_sched_entry_status_complete;
     unlink_sockets();
+    close_sockets();
+
     LOG_DEBUG("completed: ", name());
 }
 
-int ze_handle_exchange_entry::create_server_socket(const std::string socket_name,
-                                                   struct sockaddr_un *socket_addr,
-                                                   int *addr_len,
-                                                   const int comm_size) {
+int ze_handle_exchange_entry::create_server_socket(const std::string& socket_name,
+                                                   struct sockaddr_un* socket_addr,
+                                                   int* addr_len,
+                                                   int comm_size) {
     int ret = 0;
     memset(&(*socket_addr), 0, sizeof((*socket_addr)));
 
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) {
-        CCL_THROW("cannot create a server socket: ", sock);
+        CCL_THROW("cannot create a server socket: ", sock, ", errno: ", strerror(errno));
     }
 
     socket_addr->sun_family = AF_UNIX;
     strncpy(socket_addr->sun_path, socket_name.c_str(), sizeof(socket_addr->sun_path) - 1);
+    socket_addr->sun_path[sizeof(socket_addr->sun_path) - 1] = '\0';
     *addr_len = sizeof((*socket_addr));
 
-    ret = bind(sock, ((struct sockaddr *)&(*socket_addr)), *addr_len);
+    ret = bind(sock, ((struct sockaddr*)&(*socket_addr)), *addr_len);
     if (ret) {
         CCL_THROW("bind error: ,", ret, ", errno: ", strerror(errno));
     }
@@ -193,30 +194,30 @@ int ze_handle_exchange_entry::create_server_socket(const std::string socket_name
     return sock;
 }
 
-int ze_handle_exchange_entry::create_client_socket(const std::string socket_name,
-                                                   struct sockaddr_un *socket_addr,
-                                                   int *addr_len) {
+int ze_handle_exchange_entry::create_client_socket(const std::string& socket_name,
+                                                   struct sockaddr_un* socket_addr,
+                                                   int* addr_len) {
     memset(&(*socket_addr), 0, sizeof(*(socket_addr)));
 
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) {
-        CCL_THROW("cannot create a client socket: ", sock);
+        CCL_THROW("cannot create a client socket: ", sock, ", errno: ", strerror(errno));
     }
 
     socket_addr->sun_family = AF_UNIX;
     strncpy(socket_addr->sun_path, socket_name.c_str(), sizeof(socket_addr->sun_path) - 1);
+    socket_addr->sun_path[sizeof(socket_addr->sun_path) - 1] = '\0';
     *addr_len = sizeof((*socket_addr));
 
     return sock;
 }
 
 int ze_handle_exchange_entry::accept_call(int connect_socket,
-                                          struct sockaddr_un *socket_addr,
-                                          int *addr_len,
-                                          const std::string socket_name,
-                                          int &sock) {
-    sock =
-        accept(connect_socket, ((struct sockaddr *)&(*socket_addr)), ((socklen_t *)&(*addr_len)));
+                                          struct sockaddr_un* socket_addr,
+                                          int* addr_len,
+                                          const std::string& socket_name,
+                                          int& sock) {
+    sock = accept(connect_socket, ((struct sockaddr*)&(*socket_addr)), ((socklen_t*)&(*addr_len)));
     if (sock < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             LOG_DEBUG("accept get error: ", strerror(errno));
@@ -227,15 +228,15 @@ int ze_handle_exchange_entry::accept_call(int connect_socket,
         CCL_THROW("accept failed, get errno: ", strerror(errno), " sock: ", sock);
     }
 
-    LOG_DEBUG("accept from [", comm->rank(), "]  (wait) on: ", socket_name.c_str());
+    LOG_DEBUG("accept from [", comm->rank(), "] (wait) on: ", socket_name);
     return 0;
 }
 
 int ze_handle_exchange_entry::connect_call(int sock,
-                                           struct sockaddr_un *socket_addr,
+                                           struct sockaddr_un* socket_addr,
                                            int addr_len,
-                                           const std::string socket_name) {
-    int ret = connect(sock, ((struct sockaddr *)&(*socket_addr)), addr_len);
+                                           const std::string& socket_name) {
+    int ret = connect(sock, ((struct sockaddr*)&(*socket_addr)), addr_len);
     if (ret < 0) {
         if (errno == ECONNREFUSED || errno == ENOENT) {
             return errno;
@@ -247,25 +248,22 @@ int ze_handle_exchange_entry::connect_call(int sock,
 
     LOG_DEBUG("connect from: [",
               comm->rank(),
-              "]  to [",
-              ((comm->rank() - 1) + comm->size()) % comm->size(),
+              "] to [",
+              (comm->rank() - 1 + comm->size()) % comm->size(),
               "] with: ",
-              socket_name.c_str());
+              socket_name);
 
     return 0;
 }
 
-int ze_handle_exchange_entry::sendmsg_fd(int sock, int fd) {
-    char tmp;
-    struct msghdr msg;
-    struct cmsghdr *cmsg;
+int ze_handle_exchange_entry::sendmsg_fd(int sock, int fd, size_t mem_offset) {
+    struct msghdr msg = {};
+    struct cmsghdr* cmsg;
     char ctrl_buf[CMSG_SPACE(sizeof(fd))];
     struct iovec iov;
 
-    iov.iov_base = &tmp;
-    iov.iov_len = 1;
-
-    memset(&msg, 0, sizeof(msg));
+    iov.iov_base = &mem_offset;
+    iov.iov_len = sizeof(size_t);
 
     msg.msg_control = ctrl_buf;
     msg.msg_controllen = CMSG_SPACE(sizeof(fd));
@@ -276,33 +274,34 @@ int ze_handle_exchange_entry::sendmsg_fd(int sock, int fd) {
     cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
     cmsg->cmsg_level = SOL_SOCKET;
     cmsg->cmsg_type = SCM_RIGHTS;
-    *reinterpret_cast<int *>(CMSG_DATA(cmsg)) = fd;
+    *reinterpret_cast<int*>(CMSG_DATA(cmsg)) = fd;
 
     ssize_t ret = sendmsg(sock, &msg, 0);
-    if (ret == -1) {
+    if (ret < 0) {
         CCL_THROW("sendmsg get error: ", ret, ", errno: ", strerror(errno));
         return ret;
     }
     return 0;
 }
 
-int ze_handle_exchange_entry::recvmsg_fd(int sock, int *fd) {
-    char tmp;
-    struct msghdr msg = { 0 };
-    struct cmsghdr *cmsg;
-    char ctrl_buf[CMSG_SPACE(sizeof(*fd))];
+int ze_handle_exchange_entry::recvmsg_fd(int sock, int& fd, size_t& mem_offset) {
+    struct msghdr msg = {};
+    struct cmsghdr* cmsg;
+    char ctrl_buf[CMSG_SPACE(sizeof(int))];
     struct iovec iov = {};
 
-    iov.iov_base = &tmp;
-    iov.iov_len = 1;
+    size_t buf = {};
+
+    iov.iov_base = &buf;
+    iov.iov_len = sizeof(size_t);
 
     msg.msg_control = ctrl_buf;
-    msg.msg_controllen = CMSG_SPACE(sizeof(*fd));
+    msg.msg_controllen = CMSG_SPACE(sizeof(int));
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
 
     ssize_t ret = recvmsg(sock, &msg, 0);
-    if (ret == -1) {
+    if (ret < 0) {
         LOG_ERROR("recvmsg error: ", ret, ", errno: ", strerror(errno));
         return ret;
     }
@@ -312,19 +311,27 @@ int ze_handle_exchange_entry::recvmsg_fd(int sock, int *fd) {
     }
 
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        if (cmsg->cmsg_len == CMSG_LEN(sizeof(*fd)) && cmsg->cmsg_level == SOL_SOCKET &&
+        if (cmsg->cmsg_len == CMSG_LEN(sizeof(int)) && cmsg->cmsg_level == SOL_SOCKET &&
             cmsg->cmsg_type == SCM_RIGHTS) {
-            memcpy(fd, CMSG_DATA(cmsg), sizeof(int));
+            memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
             break;
         }
     }
 
+    // we assume that the message has a strict format and size, if not this means that something
+    // is wrong.
+    if (msg.msg_iovlen != 1 || msg.msg_iov[0].iov_len != sizeof(size_t)) {
+        CCL_THROW("Received unexpected message format");
+    }
+
+    memcpy(&mem_offset, msg.msg_iov[0].iov_base, sizeof(size_t));
+
     return 0;
 }
 
-void ze_handle_exchange_entry::sendmsg_call(int socket_fd, int fd) {
-    ssize_t ret = sendmsg_fd(socket_fd, fd);
-    if (ret == -1) {
+void ze_handle_exchange_entry::sendmsg_call(int socket_fd, int fd, size_t mem_offset) {
+    ssize_t ret = sendmsg_fd(socket_fd, fd, mem_offset);
+    if (ret < 0) {
         CCL_THROW("could not send socket_fd",
                   socket_fd,
                   "fd: ",
@@ -334,12 +341,12 @@ void ze_handle_exchange_entry::sendmsg_call(int socket_fd, int fd) {
                   ", errno: ",
                   strerror(errno));
     }
-    LOG_DEBUG("send: my_rank[", comm->rank(), "], send fd:", fd, " socket_fd:", socket_fd);
+    LOG_DEBUG("send: rank[", comm->rank(), "], send fd:", fd, ", socket_fd:", socket_fd);
 }
 
-void ze_handle_exchange_entry::recvmsg_call(int socket_fd, int *fd) {
-    int ret = recvmsg_fd(socket_fd, fd);
-    if (ret == -1) {
+void ze_handle_exchange_entry::recvmsg_call(int socket_fd, int& fd, size_t& mem_offset) {
+    int ret = recvmsg_fd(socket_fd, fd, mem_offset);
+    if (ret < 0) {
         CCL_THROW("cannot recv data from socket: ",
                   socket_fd,
                   ", from: ",
@@ -349,31 +356,53 @@ void ze_handle_exchange_entry::recvmsg_call(int socket_fd, int *fd) {
                   ", errno: ",
                   strerror(errno));
     }
-    LOG_DEBUG("recv: my_rank[", my_rank, "], gotten fd:", (*fd), ", socket_fd:", socket_fd);
+    LOG_DEBUG("recv: rank[", rank, "], gotten fd:", fd, ", socket_fd:", socket_fd);
 }
 
-int ze_handle_exchange_entry::get_fd_from_handle(const ze_ipc_mem_handle_t *handle, int *fd) {
+int ze_handle_exchange_entry::get_fd_from_handle(const ze_ipc_mem_handle_t* handle, int* fd) {
     memcpy(fd, handle, sizeof(*fd));
     return 0;
 }
 
-int ze_handle_exchange_entry::get_handle_from_fd(int *fd, ze_ipc_mem_handle_t *handle) {
-    memcpy(handle, static_cast<void *>(fd), sizeof(*fd));
+int ze_handle_exchange_entry::get_handle_from_fd(int* fd, ze_ipc_mem_handle_t* handle) {
+    memcpy(handle, static_cast<void*>(fd), sizeof(*fd));
     return 0;
 }
 
-int ze_handle_exchange_entry::get_handle(ze_context_handle_t context,
-                                         ze_ipc_mem_handle_t *handle,
-                                         void *buffer) {
+void ze_handle_exchange_entry::get_handle(ze_context_handle_t context,
+                                          const void* buffer,
+                                          ze_ipc_mem_handle_t* handle) {
     ze_result_t ret;
 
     ret = zeMemGetIpcHandle(context, buffer, handle);
     if (ret) {
         CCL_THROW("zeMemGetIpcHandle is failed: ", ret);
-        return ret;
+    }
+}
+
+static size_t get_ptr_diff(const void* ptr1, const void* ptr2) {
+    return static_cast<const char*>(ptr2) - static_cast<const char*>(ptr1);
+}
+
+size_t ze_handle_exchange_entry::get_mem_offset(ze_context_handle_t context, void* ptr) {
+    void* base_ptr = nullptr;
+    size_t alloc_size = 0;
+
+    auto ret = zeMemGetAddressRange(context, ptr, &base_ptr, &alloc_size);
+    if (ret != ZE_RESULT_SUCCESS) {
+        CCL_THROW("zeMemGetAddressRange failed, error: " + std::to_string(ret));
     }
 
-    return 0;
+    LOG_DEBUG("zeMemGetAddressRange for ptr ",
+              ptr,
+              " base ptr: ",
+              base_ptr,
+              ", offset: ",
+              get_ptr_diff(base_ptr, ptr),
+              ", alloc size: ",
+              alloc_size);
+
+    return static_cast<char*>(ptr) - static_cast<char*>(base_ptr);
 }
 
 void ze_handle_exchange_entry::unlink_sockets() {
@@ -388,4 +417,4 @@ void ze_handle_exchange_entry::close_sockets() {
     close(left_peer_connect_socket);
 }
 
-#endif // MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
