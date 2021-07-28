@@ -198,4 +198,4 @@ atl_mpi::~atl_mpi() {
         atl_finalize();
 }
 
-#endif /* CCL_ENABLE_MPI */
+#endif // CCL_ENABLE_MPI

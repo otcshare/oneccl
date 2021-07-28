@@ -41,7 +41,7 @@ std::map<ccl_atl_transport, std::string> env_data::atl_transport_names = {
 #ifdef CCL_ENABLE_MPI
         ,
     std::make_pair(ccl_atl_mpi, "mpi")
-#endif /* CCL_ENABLE_MPI */
+#endif // CCL_ENABLE_MPI
 };
 
 std::map<ccl_staging_buffer, std::string> env_data::staging_buffer_names = {
@@ -59,7 +59,9 @@ env_data::env_data()
         : was_printed(false),
 
           log_level(ccl_log_level::warn),
+          queue_dump(0),
           sched_dump(0),
+          sched_profile(0),
 
           fw_type(ccl_framework_none),
 
@@ -68,9 +70,9 @@ env_data::env_data()
           worker_wait(1),
 #ifdef CCL_ENABLE_MPI
           atl_transport(ccl_atl_mpi),
-#else /* CCL_ENABLE_MPI */
+#else // CCL_ENABLE_MPI
           atl_transport(ccl_atl_ofi),
-#endif /* CCL_ENABLE_MPI */
+#endif // CCL_ENABLE_MPI
           enable_shm(0),
           enable_rma(0),
           enable_device_buf(0),
@@ -94,9 +96,14 @@ env_data::env_data()
           max_short_size(0),
           bcast_part_count(CCL_ENV_SIZET_NOT_SPECIFIED),
           cache_key_type(ccl_cache_key_match_id),
+#ifdef CCL_ENABLE_SYCL
+          enable_cache_flush(1),
+#else // CCL_ENABLE_SYCL
           enable_cache_flush(0),
+#endif // CCL_ENABLE_SYCL
           enable_strict_order(0),
           staging_buffer(ccl_staging_usm),
+          enable_op_sync(0),
 
           chunk_count(1),
           min_chunk_size(65536),
@@ -112,10 +119,14 @@ env_data::env_data()
           alltoall_scatter_plain(0),
 
           enable_comm_kernels(0),
-          comm_kernels_path(),
-          comm_kernels_debug(0),
-          gpu_group_size(CCL_ENV_SIZET_NOT_SPECIFIED),
-          gpu_group_count(CCL_ENV_SIZET_NOT_SPECIFIED),
+          kernel_path(),
+          kernel_debug(0),
+          enable_kernel_cache(1),
+          kernel_group_size(CCL_ENV_SIZET_NOT_SPECIFIED),
+          kernel_group_count(CCL_ENV_SIZET_NOT_SPECIFIED),
+          enable_kernel_sync(1),
+          kernel_1s_lead(1),
+          ze_serialize_mode(0),
 
           bf16_impl_type(ccl_bf16_no_compiler_support),
           fp16_impl_type(ccl_fp16_no_compiler_support) {
@@ -124,7 +135,9 @@ env_data::env_data()
 void env_data::parse() {
     env_2_enum(CCL_LOG_LEVEL, ccl_logger::level_names, log_level);
     ccl_logger::set_log_level(log_level);
+    env_2_type(CCL_QUEUE_DUMP, queue_dump);
     env_2_type(CCL_SCHED_DUMP, sched_dump);
+    env_2_type(CCL_SCHED_PROFILE, sched_profile);
 
     if (fw_type == ccl_framework_none) {
         /* try to automatically detect framework */
@@ -162,6 +175,7 @@ void env_data::parse() {
     env_2_type(CCL_ATL_EXTRA_EP, enable_extra_ep);
 
     env_2_enum(CCL_MNIC, mnic_type_names, mnic_type);
+    env_2_type(CCL_MNIC_NAME, mnic_name_raw);
     env_2_type(CCL_MNIC_COUNT, mnic_count);
     if (mnic_count == CCL_ENV_SIZET_NOT_SPECIFIED) {
         mnic_count = worker_count;
@@ -213,7 +227,12 @@ void env_data::parse() {
     env_2_enum(CCL_CACHE_KEY, ccl_sched_key::key_type_names, cache_key_type);
     env_2_type(CCL_CACHE_FLUSH, enable_cache_flush);
     env_2_type(CCL_STRICT_ORDER, enable_strict_order);
+    if (enable_unordered_coll && enable_strict_order) {
+        LOG_INFO("unordered collectives are requested, disable strict order");
+        enable_strict_order = 0;
+    }
     env_2_enum(CCL_STAGING_BUFFER, staging_buffer_names, staging_buffer);
+    env_2_type(CCL_OP_SYNC, enable_op_sync);
 
     env_2_type(CCL_CHUNK_COUNT, chunk_count);
     CCL_THROW_IF_NOT(chunk_count >= 1, "incorrect ", CCL_CHUNK_COUNT, " ", chunk_count);
@@ -245,17 +264,20 @@ void env_data::parse() {
 #ifndef MULTI_GPU_SUPPORT
         CCL_THROW("comm kernels are requested but not supported in this version of CCL");
 #endif
-
-        env_2_type(CCL_COMM_KERNELS_PATH, comm_kernels_path);
-        if (comm_kernels_path.empty()) {
+        env_2_type(CCL_KERNEL_PATH, kernel_path);
+        if (kernel_path.empty()) {
             std::string ccl_root = getenv("CCL_ROOT");
             CCL_THROW_IF_NOT(!ccl_root.empty(), "incorrect comm kernels path, CCL_ROOT not found!");
-            comm_kernels_path = ccl_root + "/lib/kernels/";
+            kernel_path = ccl_root + "/lib/kernels/";
         }
-        env_2_type(CCL_COMM_KERNELS_DEBUG, comm_kernels_debug);
     }
-    env_2_type(CCL_GPU_GROUP_SIZE, gpu_group_size);
-    env_2_type(CCL_GPU_GROUP_COUNT, gpu_group_count);
+    env_2_type(CCL_KERNEL_DEBUG, kernel_debug);
+    env_2_type(CCL_KERNEL_CACHE, enable_kernel_cache);
+    env_2_type(CCL_KERNEL_GROUP_SIZE, kernel_group_size);
+    env_2_type(CCL_KERNEL_GROUP_COUNT, kernel_group_count);
+    env_2_type(CCL_KERNEL_SYNC, enable_kernel_sync);
+    env_2_type(CCL_KERNEL_1S_LEAD, kernel_1s_lead);
+    env_2_type(CCL_ZE_SERIALIZE, ze_serialize_mode);
 
     auto bf16_impl_types = ccl_bf16_get_impl_types();
     ccl_bf16_impl_type bf16_env_impl_type;
@@ -298,13 +320,13 @@ void env_data::print(int rank) {
         LOG_INFO("specification version: ", ONECCL_SPEC_VERSION);
 #ifdef CCL_ENABLE_SYCL
         LOG_INFO("compute backend: ", version.cl_backend_name);
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 #ifdef ENABLE_DEBUG
         const char* build_mode = "debug";
-#else /* ENABLE_DEBUG */
+#else // ENABLE_DEBUG
         const char* build_mode = "release";
-#endif /* ENABLE_DEBUG */
+#endif // ENABLE_DEBUG
         LOG_INFO("build mode: ", build_mode);
         LOG_INFO("C compiler: ", CCL_C_COMPILER);
         LOG_INFO("C++ compiler: ", CCL_CXX_COMPILER);
@@ -314,7 +336,7 @@ void env_data::print(int rank) {
     auto local_proc_idx = global_data.executor->get_local_proc_idx();
     auto local_proc_count = global_data.executor->get_local_proc_count();
 
-    if (rank < (int)local_proc_count) {
+    if (rank < local_proc_count) {
         for (size_t w_idx = 0; w_idx < worker_count; w_idx++) {
             LOG_INFO("local process [",
                      local_proc_idx,
@@ -337,7 +359,9 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_WORKER_WAIT, ": ", worker_wait);
 
     LOG_INFO(CCL_LOG_LEVEL, ": ", str_by_enum(ccl_logger::level_names, log_level));
+    LOG_INFO(CCL_QUEUE_DUMP, ": ", queue_dump);
     LOG_INFO(CCL_SCHED_DUMP, ": ", sched_dump);
+    LOG_INFO(CCL_SCHED_PROFILE, ": ", sched_profile);
 
     LOG_INFO(CCL_FRAMEWORK, ": ", str_by_enum(ccl_framework_type_names, fw_type));
 
@@ -349,6 +373,8 @@ void env_data::print(int rank) {
     LOG_DEBUG(CCL_ATL_EXTRA_EP, ": ", enable_extra_ep);
 
     LOG_INFO(CCL_MNIC, ": ", str_by_enum(mnic_type_names, mnic_type));
+    LOG_INFO(
+        CCL_MNIC_NAME, ": ", (mnic_name_raw.length()) ? mnic_name_raw : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_MNIC_COUNT, ": ", mnic_count);
 
     LOG_INFO(CCL_ALLGATHERV,
@@ -398,6 +424,7 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_CACHE_FLUSH, ": ", enable_cache_flush);
     LOG_INFO(CCL_STRICT_ORDER, ": ", enable_strict_order);
     LOG_INFO(CCL_STAGING_BUFFER, ": ", str_by_enum(staging_buffer_names, staging_buffer));
+    LOG_INFO(CCL_OP_SYNC, ": ", enable_op_sync);
 
     LOG_INFO(CCL_CHUNK_COUNT, ": ", chunk_count);
     LOG_INFO(CCL_MIN_CHUNK_SIZE, ": ", min_chunk_size);
@@ -422,19 +449,23 @@ void env_data::print(int rank) {
 
 #ifdef CCL_ENABLE_SYCL
     LOG_INFO(CCL_COMM_KERNELS, ": ", enable_comm_kernels);
-    LOG_INFO(CCL_COMM_KERNELS_PATH,
+    LOG_INFO(
+        CCL_KERNEL_PATH, ": ", (!kernel_path.empty()) ? kernel_path : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO(CCL_KERNEL_DEBUG, ": ", kernel_debug);
+    LOG_INFO(CCL_KERNEL_CACHE, ": ", enable_kernel_cache);
+    LOG_INFO(CCL_KERNEL_GROUP_SIZE,
              ": ",
-             (!comm_kernels_path.empty()) ? comm_kernels_path : CCL_ENV_STR_NOT_SPECIFIED);
-    LOG_INFO(CCL_COMM_KERNELS_DEBUG, ": ", comm_kernels_debug);
-    LOG_INFO(CCL_GPU_GROUP_SIZE,
+             (kernel_group_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(kernel_group_size)
+                                                                : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO(CCL_KERNEL_GROUP_COUNT,
              ": ",
-             (gpu_group_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(gpu_group_size)
-                                                             : CCL_ENV_STR_NOT_SPECIFIED);
-    LOG_INFO(CCL_GPU_GROUP_COUNT,
-             ": ",
-             (gpu_group_count != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(gpu_group_count)
-                                                              : CCL_ENV_STR_NOT_SPECIFIED);
-#endif /* CCL_ENABLE_SYCL  */
+             (kernel_group_count != CCL_ENV_SIZET_NOT_SPECIFIED)
+                 ? std::to_string(kernel_group_count)
+                 : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO(CCL_KERNEL_SYNC, ": ", enable_kernel_sync);
+    LOG_INFO(CCL_KERNEL_1S_LEAD, ": ", kernel_1s_lead);
+    LOG_INFO(CCL_ZE_SERIALIZE, ": ", ze_serialize_mode);
+#endif // CCL_ENABLE_SYCL
 
     LOG_INFO(CCL_BF16, ": ", str_by_enum(bf16_impl_names, bf16_impl_type));
     LOG_INFO(CCL_FP16, ": ", str_by_enum(fp16_impl_names, fp16_impl_type));
@@ -463,7 +494,7 @@ void env_data::set_internal_env() {
     }
 }
 
-int env_data::env_2_worker_affinity_auto(size_t local_proc_idx, size_t workers_per_process) {
+int env_data::env_2_worker_affinity_auto(int local_proc_idx, size_t workers_per_process) {
     char* available_cores = std::getenv(I_MPI_AVAILABLE_CORES_ENV);
     CCL_THROW_IF_NOT(available_cores && strlen(available_cores) != 0,
                      "auto pinning requires ",
@@ -606,7 +637,7 @@ int env_data::parse_affinity(const std::string& input,
     return 1;
 }
 
-int env_data::env_2_worker_affinity(size_t local_proc_idx, size_t local_proc_count) {
+int env_data::env_2_worker_affinity(int local_proc_idx, int local_proc_count) {
     CCL_THROW_IF_NOT(local_proc_count > 0);
 
     size_t idx;
@@ -673,7 +704,7 @@ void env_data::env_2_atl_transport() {
         atl_transport = ccl_atl_ofi;
     }
     else
-#endif /* CCL_ENABLE_MPI */
+#endif // CCL_ENABLE_MPI
         env_2_enum(CCL_ATL_TRANSPORT, atl_transport_names, atl_transport);
 }
 
@@ -684,4 +715,4 @@ bool env_data::with_mpirun() {
                : false;
 }
 
-} /* namespace ccl */
+} // namespace ccl

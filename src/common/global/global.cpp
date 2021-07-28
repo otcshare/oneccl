@@ -25,6 +25,11 @@
 #include "parallelizer/parallelizer.hpp"
 #include "sched/cache/cache.hpp"
 
+#ifdef MULTI_GPU_SUPPORT
+#include "sched/entry/gpu/ze_cache.hpp"
+#include "sched/entry/gpu/ze_primitives.hpp"
+#endif // MULTI_GPU_SUPPORT
+
 namespace ccl {
 
 thread_local bool global_data::is_worker_thread = false;
@@ -36,6 +41,7 @@ global_data::global_data() {
 
     //TODO new_api configure thread wait timeout
     thread_barrier_wait_timeout_sec = 5;
+    kernel_counter = 0;
 }
 
 global_data::~global_data() {
@@ -60,12 +66,20 @@ ccl::status global_data::reset() {
     reset_resize_dependent_objects();
     reset_resize_independent_objects();
 
+#ifdef MULTI_GPU_SUPPORT
+    finalize_gpu();
+#endif // MULTI_GPU_SUPPORT
+
     return ccl::status::success;
 }
 
 ccl::status global_data::init() {
     env_object.parse();
     env_object.set_internal_env();
+
+#ifdef MULTI_GPU_SUPPORT
+    init_gpu();
+#endif // MULTI_GPU_SUPPORT
 
     init_resize_dependent_objects();
     init_resize_independent_objects();
@@ -112,4 +126,22 @@ void global_data::reset_resize_independent_objects() {
     hwloc_wrapper.reset();
 }
 
-} /* namespace ccl */
+#ifdef MULTI_GPU_SUPPORT
+void global_data::init_gpu() {
+    LOG_INFO("initializing level-zero");
+    ze_result_t res = zeInit(ZE_INIT_FLAG_GPU_ONLY);
+    if (res != ZE_RESULT_SUCCESS) {
+        CCL_THROW("error at zeInit, code: ", ccl::ze::to_string(res));
+    }
+    ze_cache = std::unique_ptr<ccl::ze::cache>(new ccl::ze::cache(env_object.worker_count));
+    LOG_INFO("initialized level-zero");
+}
+
+void global_data::finalize_gpu() {
+    LOG_INFO("finalizing level-zero");
+    ze_cache.reset();
+    LOG_INFO("finalized level-zero");
+}
+#endif // MULTI_GPU_SUPPORT
+
+} // namespace ccl

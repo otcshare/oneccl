@@ -19,6 +19,7 @@
 #include "coll/coll_param.hpp"
 #include "coll/selection/selection.hpp"
 #include "common/global/global.hpp"
+#include "sched/entry/factory/entry_factory.hpp"
 #include "sched/sched_base.hpp"
 
 std::string to_string(ccl_sched_add_mode mode) {
@@ -30,6 +31,10 @@ std::string to_string(ccl_sched_add_mode mode) {
     return "DEFAULT";
 }
 
+ccl_sched_base::~ccl_sched_base() {
+    free_memory();
+}
+
 void ccl_sched_base::set_coll_attr(const ccl_coll_attr& attr) {
     coll_attr = attr;
 }
@@ -38,7 +43,7 @@ void ccl_sched_base::update_coll_param_and_attr(const ccl_coll_param& param,
                                                 const ccl_coll_attr& attr) {
 #ifdef CCL_ENABLE_SYCL
     coll_param.copy_deps(param.deps);
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
     bool has_pre_post_copies =
         (!coll_param.device_send_bufs.empty() || !coll_param.device_recv_bufs.empty()) ? true
@@ -64,17 +69,17 @@ void ccl_sched_base::update_coll_param_and_attr(const ccl_coll_param& param,
     int comm_size = coll_param.comm->size();
 
     if (coll_param.ctype == ccl_coll_allgatherv) {
-        if (coll_attr.vector_buf)
+        if (coll_attr.is_vector_buf)
             CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_bufs.size()) == comm_size);
         CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_counts.size()) == comm_size);
     }
 
     if (coll_param.ctype == ccl_coll_alltoallv) {
-        if (coll_attr.vector_buf)
+        if (coll_attr.is_vector_buf)
             CCL_THROW_IF_NOT(static_cast<int>(coll_param.send_bufs.size()) == comm_size);
         CCL_THROW_IF_NOT(static_cast<int>(coll_param.send_counts.size()) == comm_size);
 
-        if (coll_attr.vector_buf)
+        if (coll_attr.is_vector_buf)
             CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_bufs.size()) == comm_size);
         CCL_THROW_IF_NOT(static_cast<int>(coll_param.recv_counts.size()) == comm_size);
     }
@@ -143,15 +148,17 @@ ccl_buffer ccl_sched_base::alloc_staging_buffer(size_t bytes) {
 
     return buffer;
 }
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
-void ccl_sched_base::free_buffers() {
+void ccl_sched_base::free_memory() {
     std::list<ccl_sched_buffer_handler>::iterator it;
     for (it = memory.buf_list.begin(); it != memory.buf_list.end(); it++) {
         LOG_DEBUG("free ", it->buffer.get_ptr());
         CCL_FREE(it->buffer.get_ptr());
     }
     memory.buf_list.clear();
+
+    free_memory_regions();
 
 #ifdef CCL_ENABLE_SYCL
     std::list<ccl_sched_sycl_buffer_handler>::iterator sycl_it;
@@ -160,7 +167,12 @@ void ccl_sched_base::free_buffers() {
         free(sycl_it->buffer.get_ptr(), sycl_it->ctx);
     }
     memory.sycl_buf_list.clear();
-#endif /* CCL_ENABLE_SYCL */
+
+#ifdef MULTI_GPU_SUPPORT
+    memory.handle_manager.clear();
+#endif // MULTI_GPU_SUPPORT
+
+#endif // CCL_ENABLE_SYCL
 }
 
 ccl_buffer ccl_sched_base::update_buffer(ccl_buffer buffer, size_t new_size) {
@@ -258,6 +270,35 @@ void ccl_sched_base::add_memory_region(atl_mr_t* mr) {
     memory.mr_list.emplace_back(mr);
 }
 
+void ccl_sched_base::free_memory_regions() {
+    if (memory.mr_list.empty()) {
+        return;
+    }
+
+    /* perform deregistration in worker thread */
+
+    ccl_coll_param param{};
+    param.ctype = ccl_coll_internal;
+    param.comm = coll_param.comm;
+    std::unique_ptr<ccl_extra_sched> dereg_sched(new ccl_extra_sched(param, sched_id));
+    entry_factory::make_entry<deregister_entry>(dereg_sched.get(), memory.mr_list, param.comm);
+
+    if (ccl::global_data::get().is_worker_thread || !ccl::global_data::env().worker_offload) {
+        dereg_sched->do_progress();
+    }
+    else {
+        CCL_THROW("unsupported path");
+        /* release ownership, because ccl_wait_impl use delete inside */
+        // ccl_wait_impl<ccl_extra_sched>(
+        //     ccl::global_data::get().executor.get(),
+        //     start_subsched(dereg_sched.release()));
+    }
+
+    if (!memory.mr_list.empty()) {
+        LOG_ERROR("memory region list is not empty after deregister_entry completion");
+    }
+}
+
 void ccl_sched_base::get_pre_post_copy_counts(std::vector<size_t>& d2h_counts,
                                               std::vector<size_t>& h2d_counts,
                                               bool& reuse_buffers) {
@@ -291,7 +332,7 @@ void ccl_sched_base::get_pre_post_copy_counts(std::vector<size_t>& d2h_counts,
             break;
         case ccl_coll_alltoallv:
             if (param.recv_bufs.size() > 1) {
-                /* expect that vector_buf is enabled for send/recv both */
+                /* expect that is_vector_buf is enabled for send/recv both */
                 d2h_counts.insert(
                     d2h_counts.end(), param.send_counts.begin(), param.send_counts.end());
                 h2d_counts.insert(
@@ -343,6 +384,7 @@ void ccl_sched_base::alloc_buffers_for_pre_post_copy() {
     selector_param.dtype = param.dtype;
     selector_param.comm = param.comm;
     selector_param.stream = param.stream;
+    selector_param.is_sycl_buf = coll_attr.is_sycl_buf;
 
     ccl_coll_allreduce_algo allreduce_algo = ccl_coll_allreduce_last_value;
     if (param.ctype == ccl_coll_allreduce) {
@@ -350,13 +392,13 @@ void ccl_sched_base::alloc_buffers_for_pre_post_copy() {
     }
 
     if (!param.stream || !param.stream->is_sycl_device_stream() ||
-        allreduce_algo == ccl_coll_allreduce_gpu) {
+        allreduce_algo == ccl_coll_allreduce_topo_ring) {
         return;
     }
 
     bool should_alloc_buffers = true;
 
-    if (!coll_attr.is_sycl_buffer) {
+    if (!coll_attr.is_sycl_buf) {
         auto bufs = param.get_all_non_zero_bufs();
         if (!bufs.empty()) {
             auto usm_type =
@@ -439,7 +481,7 @@ void ccl_sched_base::alloc_buffers_for_pre_post_copy() {
                      " vs ",
                      param.device_recv_bufs.size());
 
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 }
 
 void ccl_sched_base::update_id() {

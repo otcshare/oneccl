@@ -16,6 +16,12 @@ TESTS_LOG_FILE="${SCRIPT_DIR}/tests_log_${current_date}.txt"
 touch ${LOG_FILE}
 touch ${TESTS_LOG_FILE}
 
+set_base_env() {
+    export LD_LIBRARY_PATH=${OFI_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH=${UCX_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH=${UCC_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}
+}
+
 set_run_env() {
     # UCC
     export UCC_CL_BASIC_USE_CCL=1 # enables CCL transport layer
@@ -23,14 +29,16 @@ set_run_env() {
     export UCC_CL_BASIC_LOG_LEVEL=INFO
     export UCC_TL_UCP_LOG_LEVEL=INFO
     export UCC_TL_CCL_LOG_LEVEL=INFO
-    export LD_LIBRARY_PATH=${UCX_INSTALL_DIR}/lib:${UCC_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}
 
     # UCX
     export UCX_LOG_LEVEL=INFO
+    export UCX_TLS=tcp,shm,self
 
     # CCL
     export CCL_LOG_LEVEL=INFO
+    #export CCL_SCHED_DUMP=1
     export CCL_ATL_TRANSPORT=ofi
+    export CCL_WORKER_COUNT=4
     ccl_vars_file="${CCL_INSTALL_DIR}/env/setvars.sh"
     if [[ -f ${ccl_vars_file} ]]
     then
@@ -42,15 +50,21 @@ set_run_env() {
 
     # OFI
     export FI_LOG_LEVEL=INFO
-    export FI_PROVIDER=psm3
-    export PSM3_MULTI_EP=1 # to handle case when MPI initializes PSM3 before CCL
-    export PSM3_RDMA=2 # enables user space RC QP RDMA
-    export PSM3_MR_CACHE_MODE=2 # near term workaround until a MR cache solution completed
-    export FI_PROVIDER_PATH=${PSM3_INSTALL_DIR}/lib/libfabric
-    export LD_LIBRARY_PATH=${OFI_INSTALL_DIR}/lib:${OFI_INSTALL_DIR}/lib64:${LD_LIBRARY_PATH}
+    if [[ ${CLUSTER} = "fabric" ]]
+    then
+        export FI_PROVIDER=verbs
+        export FI_VERBS_IFACE=ib0
+        export CCL_KVS_IFACE=ib0
+    else
+        export FI_PROVIDER=psm3
+        export PSM3_MULTI_EP=1 # to handle case when MPI initializes PSM3 before CCL
+        export PSM3_RDMA=2 # enables user space RC QP RDMA
+        export PSM3_MR_CACHE_MODE=2 # near term workaround until a MR cache solution completed
+        export FI_PROVIDER_PATH=${PSM3_INSTALL_DIR}/lib/libfabric
+    fi
 }
 
-PSM3_LINK="https://github.com/otcshare/psm3.git"
+PSM3_BASE_LINK="github.com/otcshare/psm3.git"
 PSM3_BRANCH="v11.1.0.0.84"
 
 OFI_LINK="https://github.com/ofiwg/libfabric.git"
@@ -62,11 +76,10 @@ CCL_BRANCH="main"
 UCX_LINK="https://github.com/openucx/ucx.git"
 UCX_BRANCH="master"
 
-UCC_LINK="https://github.com/otcshare/ucc.git"
+UCC_BASE_LINK="github.com/otcshare/ucc.git"
 UCC_BRANCH="ccl-master"
 
 CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py37_4.9.2-Linux-x86_64.sh"
-CONDA_INSTALL_DIR=""
 
 TORCH_UCC_LINK="https://github.com/facebookresearch/torch_ucc.git"
 TORCH_UCC_BRANCH="main"
@@ -99,7 +112,11 @@ DEFAULT_INSTALL_TORCH_UCC="0"
 
 DEFAULT_RUN_TESTS="0"
 
+DEFAULT_PATH_TO_TOKEN_FILE_1S=""
+DEFAULT_USERNAME_1S=""
 DEFAULT_PROXY=""
+
+DEFAULT_CLUSTER="ccl"
 
 check_exit_code() {
     if [ $1 -ne 0 ]
@@ -150,8 +167,14 @@ print_help() {
     echo_log "      Install torch-ucc"
     echo_log "  -run_tests <bool_flag>"
     echo_log "      Run UCC, torch-ucc and PARAM tests on 2 ranks"
+    echo_log "  -token <path>"
+    echo_log "      Path to file with github credentials"
+    echo_log "  -username <name>"
+    echo_log "      Github username with access to Horovod repo"
     echo_log "  -proxy <url>"
     echo_log "      https proxy"
+    echo_log "  -cluster <name>"
+    echo_log "      Name of cluster to adjust configuration, possible values: ccl, fabric"
     echo_log ""
     echo_log "Usage examples:"
     echo_log "  ${BASENAME}.sh -full 1"
@@ -183,7 +206,10 @@ parse_arguments() {
 
     RUN_TESTS=${DEFAULT_RUN_TESTS}
 
+    PATH_TO_TOKEN_FILE_1S=${DEFAULT_PATH_TO_TOKEN_FILE_1S}
+    USERNAME_1S=${DEFAULT_USERNAME_1S}
     PROXY=${DEFAULT_PROXY}
+    CLUSTER=${DEFAULT_CLUSTER}
 
     while [ $# -ne 0 ]
     do
@@ -256,8 +282,20 @@ parse_arguments() {
                 RUN_TESTS=${2}
                 shift
                 ;;
+            "-token")
+                PATH_TO_TOKEN_FILE_1S=${2}
+                shift
+                ;;
+            "-username")
+                USERNAME_1S="${2}@"
+                shift
+                ;;
             "-proxy")
                 PROXY="${2}"
+                shift
+                ;;
+            "-cluster")
+                CLUSTER="${2}"
                 shift
                 ;;
             *)
@@ -285,6 +323,8 @@ parse_arguments() {
 
     UCC_SRC_DIR=${SCRIPT_WORK_DIR}/ucc
     UCC_INSTALL_DIR=${UCC_SRC_DIR}/_install
+
+    CONDA_INSTALL_DIR="${SCRIPT_WORK_DIR}/conda"
 
     TORCH_UCC_SRC_DIR=${SCRIPT_WORK_DIR}/torch_ucc
 
@@ -319,6 +359,12 @@ parse_arguments() {
         fi
     fi
 
+    RDMA_CORE_DIR_OPTION=""
+    if [[ ${CLUSTER} = "fabric" ]]
+    then
+        RDMA_CORE_DIR_OPTION="=/opt/rdma-core/build"
+    fi
+
     echo_log "-----------------------------------------------------------"
     echo_log "PARAMETERS"
     echo_log "-----------------------------------------------------------"
@@ -347,6 +393,7 @@ parse_arguments() {
     echo_log "RUN_TESTS          = ${RUN_TESTS}"
 
     echo_log "PROXY              = ${PROXY}"
+    echo_log "CLUSTER            = ${CLUSTER}"
 }
 
 echo_log() {
@@ -373,14 +420,15 @@ download_ofi() {
     then
         rm -rf ${PSM3_SRC_DIR}
     fi
-    https_proxy="" git clone --branch ${PSM3_BRANCH} --single-branch ${PSM3_LINK} ${PSM3_SRC_DIR}
+    GIT_ASKPASS=${PATH_TO_TOKEN_FILE_1S} git clone --branch ${PSM3_BRANCH} --single-branch \
+        https://${USERNAME_1S}${PSM3_BASE_LINK} ${PSM3_SRC_DIR}
     check_exit_code $? "Download PSM3 failed"
 
     if [[ -d ${OFI_SRC_DIR} ]]
     then
         rm -rf ${OFI_SRC_DIR}
     fi
-    https_proxy="" git clone --branch ${OFI_BRANCH} --single-branch ${OFI_LINK} ${OFI_SRC_DIR}
+    git clone --branch ${OFI_BRANCH} --single-branch ${OFI_LINK} ${OFI_SRC_DIR}
     check_exit_code $? "Download OFI failed"
 }
 
@@ -396,13 +444,16 @@ install_ofi() {
         check_exit_code 1 "Install OFI failed"
     fi
 
-    cd ${PSM3_SRC_DIR}
+    if [[ ${CLUSTER} != "fabric" ]]
+    then
+        cd ${PSM3_SRC_DIR}
 
-    ./configure --prefix=${PSM3_INSTALL_DIR} --without-psm3-rv
-    check_exit_code $? "Configure PSM3 failed"
+        ./configure --prefix=${PSM3_INSTALL_DIR} --without-psm3-rv
+        check_exit_code $? "Configure PSM3 failed"
 
-    make -j && make install
-    check_exit_code $? "Install PSM3 failed"
+        make -j && make install
+        check_exit_code $? "Install PSM3 failed"
+    fi
 
 
     cd ${OFI_SRC_DIR}
@@ -410,8 +461,8 @@ install_ofi() {
     ./autogen.sh
     check_exit_code $? "Autogen OFI failed"
 
-    ./configure --prefix=${OFI_INSTALL_DIR} --enable-atomics=no \
-        --enable-rxm --enable-shm --enable-sockets --enable-tcp --enable-verbs \
+    ./configure --prefix=${OFI_INSTALL_DIR} --libdir="${OFI_INSTALL_DIR}/lib" --enable-atomics=no \
+        --enable-rxm --enable-shm --enable-sockets --enable-tcp --enable-verbs${RDMA_CORE_DIR_OPTION} \
         --disable-bgq --disable-efa --disable-gni --disable-hook_debug --disable-mrail \
         --disable-perf --disable-psm --disable-psm2 --disable-psm3 --disable-rxd \
         --disable-rstream --disable-udp --disable-usnic --disable-xpmem
@@ -434,7 +485,7 @@ download_ccl() {
     fi
 
     cd ${SCRIPT_WORK_DIR}
-    https_proxy="" git clone --branch ${CCL_BRANCH} --single-branch ${CCL_LINK} ${CCL_SRC_DIR}
+    git clone --branch ${CCL_BRANCH} --single-branch ${CCL_LINK} ${CCL_SRC_DIR}
     check_exit_code $? "Download CCL failed"
 }
 
@@ -478,14 +529,15 @@ download_ucc() {
     then
         rm -rf ${UCX_SRC_DIR}
     fi
-    https_proxy="" git clone --branch ${UCX_BRANCH} --single-branch ${UCX_LINK} ${UCX_SRC_DIR}
+    git clone --branch ${UCX_BRANCH} --single-branch ${UCX_LINK} ${UCX_SRC_DIR}
     check_exit_code $? "Download UCX failed"
 
     if [[ -d ${UCC_SRC_DIR} ]]
     then
         rm -rf ${UCC_SRC_DIR}
     fi
-    https_proxy="" git clone --branch ${UCC_BRANCH} --single-branch ${UCC_LINK} ${UCC_SRC_DIR}
+    GIT_ASKPASS=${PATH_TO_TOKEN_FILE_1S} git clone --branch ${UCC_BRANCH} --single-branch \
+        https://${USERNAME_1S}${UCC_BASE_LINK} ${UCC_SRC_DIR}
     check_exit_code $? "Download UCC failed"
 }
 
@@ -506,7 +558,7 @@ install_ucc() {
     ./autogen.sh
     check_exit_code $? "Autogen UCX failed"
 
-    ./configure --prefix=${UCX_INSTALL_DIR} --enable-mt=yes --enable-gtest=no
+    ./configure --prefix=${UCX_INSTALL_DIR} --libdir="${UCX_INSTALL_DIR}/lib" --enable-mt=yes --enable-gtest=no
     check_exit_code $? "Configure UCX failed"
 
     make -j install
@@ -521,8 +573,9 @@ install_ucc() {
     ccl_vars_file="${CCL_INSTALL_DIR}/env/setvars.sh"
     source ${ccl_vars_file}
 
-    ./configure --prefix=${UCC_INSTALL_DIR} --with-ucx=${UCX_INSTALL_DIR} \
-        --with-ccl=${CCL_INSTALL_DIR} --with-mpi=${CCL_INSTALL_DIR}
+    ./configure --prefix=${UCC_INSTALL_DIR} --libdir="${UCC_INSTALL_DIR}/lib" \
+        --with-ucx=${UCX_INSTALL_DIR} --with-ccl=${CCL_INSTALL_DIR} \
+        --with-mpi=${CCL_INSTALL_DIR}
     check_exit_code $? "Configure UCC failed"
 
     make -j install
@@ -539,7 +592,6 @@ download_conda() {
     CONDA_FILENAME="conda.sh"
     wget -O ${CONDA_FILENAME} ${CONDA_LINK}
     chmod +x ${CONDA_FILENAME}
-    CONDA_INSTALL_DIR="${SCRIPT_WORK_DIR}/conda"
     ./${CONDA_FILENAME} -b -p ${CONDA_INSTALL_DIR}
     export CONDA_ENVS_PATH="${CONDA_INSTALL_DIR}/envs"
     export CONDA_PKGS_DIRS="${CONDA_INSTALL_DIR}/pkgs"
@@ -609,6 +661,7 @@ activate_conda() {
 
     source ${activate_script} ${CONDA_ENV_NAME}
     https_proxy=${PROXY} conda install -y pip
+    conda config --set offline false
     check_exit_code $? "Install pip failed"
 
     echo_log "PYTHON = $(which python)"
@@ -665,7 +718,7 @@ download_torch_ucc() {
     then
         rm -rf ${TORCH_UCC_SRC_DIR}
     fi
-    https_proxy="" git clone --branch ${TORCH_UCC_BRANCH} --single-branch ${TORCH_UCC_LINK} ${TORCH_UCC_SRC_DIR}
+    git clone --branch ${TORCH_UCC_BRANCH} --single-branch ${TORCH_UCC_LINK} ${TORCH_UCC_SRC_DIR}
     check_exit_code $? "Download torch-ucc failed"
 }
 
@@ -689,7 +742,6 @@ install_torch_ucc() {
 
 check_torch_ucc() {
     echo_log "================ Basic torch-ucc test ================"
-    export LD_LIBRARY_PATH=${UCX_INSTALL_DIR}/lib:${UCC_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}
     cmd="python -c \"import torch; import torch_ucc;\""
     echo_log ${cmd}
     eval ${cmd}
@@ -703,34 +755,42 @@ run_tests() {
         return
     fi
 
+    N="-n 2"
+    PPN="-ppn 1"
+    EXTRA_ARGS="-l"
+
     cd ${SCRIPT_WORK_DIR}
 
-    echo "================ UCC test ================" | tee -a ${TESTS_LOG_FILE}
-    cd ${UCC_SRC_DIR}/test/mpi
-    make
-    check_exit_code $? "Build UCC test failed"
-    cmd="mpirun -n 2 ./ucc_test_mpi --colls allgather,allgatherv,allreduce,alltoall,alltoallv,bcast \
-        --teams world --dtypes float32 --ops sum --inplace 2 --msgsize 64:1024 2>&1 | tee -a ${TESTS_LOG_FILE}"
-    echo_log "exec cmd: $cmd"
-    eval ${cmd}
-    check_exit_code $? "Run UCC test failed"
-    echo "================ ****************** ================" | tee -a ${TESTS_LOG_FILE}
+    if [[ ${CLUSTER} != "fabric" ]]
+    then
+        echo "================ 1. UCC test ================" | tee -a ${TESTS_LOG_FILE}
+        cd ${UCC_SRC_DIR}/test/mpi
+        make
+        check_exit_code $? "Build UCC test failed"
+        cmd="mpiexec ${N} ${PPN} ${EXTRA_ARGS} ./ucc_test_mpi \
+            --colls allgather,allgatherv,allreduce,alltoall,alltoallv,bcast \
+            --teams world --dtypes float32 --ops sum --inplace 2 --msgsize 64:1024 2>&1 | tee -a ${TESTS_LOG_FILE}"
+        echo_log "exec cmd: $cmd"
+        eval ${cmd}
+        check_exit_code $? "Run UCC test failed"
+        echo "================ ****************** ================" | tee -a ${TESTS_LOG_FILE}
 
-    echo "================ torch-ucc test ================" | tee -a ${TESTS_LOG_FILE}
-    cd ${TORCH_UCC_SRC_DIR}/test
-    chmod +x start_test.sh
-    cmd="./start_test.sh torch_alltoall_bench.py --backend ucc --max-size 1024 --iter 2 2>&1 | tee -a ${TESTS_LOG_FILE}"
-    echo_log "exec cmd: $cmd"
-    eval ${cmd}
-    check_exit_code $? "Run torch-ucc test failed"
-    echo "================ ****************** ================" | tee -a ${TESTS_LOG_FILE}
+        echo "================ 2. torch-ucc test ================" | tee -a ${TESTS_LOG_FILE}
+        cd ${TORCH_UCC_SRC_DIR}/test
+        chmod +x start_test.sh
+        cmd="./start_test.sh torch_alltoall_bench.py --backend ucc --max-size 1024 --iter 2 2>&1 | tee -a ${TESTS_LOG_FILE}"
+        echo_log "exec cmd: $cmd"
+        eval ${cmd}
+        check_exit_code $? "Run torch-ucc test failed"
+        echo "================ ****************** ================" | tee -a ${TESTS_LOG_FILE}
+    fi
 
-    echo "================ PARAM test ================" | tee -a ${TESTS_LOG_FILE}
+    echo "================ 3. PARAM test ================" | tee -a ${TESTS_LOG_FILE}
     if [[ -d ${PARAM_SRC_DIR} ]]
     then
         rm -rf ${PARAM_SRC_DIR}
     fi
-    cmd="https_proxy=\"\" git clone --branch ${PARAM_BRANCH} --single-branch ${PARAM_LINK} ${PARAM_SRC_DIR}"
+    cmd="git clone --branch ${PARAM_BRANCH} --single-branch ${PARAM_LINK} ${PARAM_SRC_DIR}"
     echo_log "exec cmd: $cmd"
     eval ${cmd}
     check_exit_code $? "Download PARAM failed"
@@ -748,15 +808,19 @@ run_tests() {
     echo_log "master_ip: ${master_ip_value}"
 
     MASTER_IP="--master-ip ${master_ip_value}"
-    N="-n 2"
-    PPN="-ppn 1"
 
-    cmd="mpirun ${N} ${PPN} python ./comms.py ${MASTER_IP} \
-        --b 8 --e 8M --n 64 --f 2 --z 1 \
-        --collective all_reduce --backend ucc --log INFO 2>&1 | tee -a ${TESTS_LOG_FILE}"
-    echo_log "exec cmd: $cmd"
-    eval ${cmd}
-    check_exit_code $? "Run PARAM failed"
+    param_coll_list="all_reduce all_to_all all_to_allv"
+
+    for coll in ${param_coll_list}
+    do
+        cmd="mpirun ${N} ${PPN} ${EXTRA_ARGS} python ./comms.py ${MASTER_IP} \
+            --b 8 --e 8M --n 64 --f 2 --z 1 \
+            --collective ${coll} --backend ucc --log INFO 2>&1 | tee -a ${TESTS_LOG_FILE}"
+        echo_log "exec cmd: $cmd"
+        eval ${cmd}
+        check_exit_code $? "Run PARAM/${coll} failed"
+    done
+
     echo "================ ****************** ================" | tee -a ${TESTS_LOG_FILE}
 
     fail_pattern="abort|^bad$|corrupt|^fault$|invalid|kill|runtime_error|terminate|timed|unexpected"
@@ -769,6 +833,10 @@ run_tests() {
     fi
     fail_count=`echo "${fail_strings}" | sed '/^$/d' | wc -l`
 
+    echo_log ""
+    echo_log "tests log: ${TESTS_LOG_FILE}"
+    echo_log ""
+
     if [[ ${fail_count} -ne 0 ]]
     then
         echo_log ""
@@ -776,9 +844,7 @@ run_tests() {
         echo_log ""
         echo_log "${fail_strings}"
         echo_log ""
-        echo_log "see full log ${TESTS_LOG_FILE} for details"
-        echo_log ""
-        echo_log "TEST FAILED"
+        check_exit_code ${fail_count} "TEST FAILED"
     else
         echo_log "TEST PASSED"
     fi
@@ -786,6 +852,7 @@ run_tests() {
 
 parse_arguments $@
 
+set_base_env
 check_base_env
 
 download_ofi

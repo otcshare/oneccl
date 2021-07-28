@@ -25,7 +25,7 @@
 
 #ifdef CCL_ENABLE_SYCL
 #include <CL/sycl.hpp>
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 #define CCL_REDUCE(type) \
     do { \
@@ -167,10 +167,10 @@ ccl::status ccl_comp_reduce(ccl_sched* sched,
 
     return ccl::status::success;
 
-#else /* CCL_ENABLE_SYCL */
+#else // CCL_ENABLE_SYCL
     return ccl_comp_reduce_regular(
         in_buf, in_count, inout_buf, out_count, dtype, reduction, reduction_fn, context);
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 }
 
 ccl::status ccl_comp_batch_reduce(const void* in_buf,
@@ -224,11 +224,11 @@ ccl::status ccl_comp_batch_reduce(const void* in_buf,
 
 const char* ccl_reduction_to_str(ccl::reduction type) {
     switch (type) {
-        case ccl::reduction::sum: return "SUM";
-        case ccl::reduction::prod: return "PROD";
-        case ccl::reduction::min: return "MIN";
-        case ccl::reduction::max: return "MAX";
-        case ccl::reduction::custom: return "CUSTOM";
-        default: return "UNKNOWN";
+        case ccl::reduction::sum: return "sum";
+        case ccl::reduction::prod: return "prod";
+        case ccl::reduction::min: return "min";
+        case ccl::reduction::max: return "max";
+        case ccl::reduction::custom: return "custom";
+        default: return "unknown";
     }
 }

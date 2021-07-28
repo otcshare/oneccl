@@ -54,6 +54,10 @@ class ccl_algorithm_selector_wrapper;
 
 namespace ccl {
 
+namespace ze {
+class cache;
+} // namespace ze
+
 // class comm_group;
 // using comm_group_t = std::shared_ptr<comm_group>;
 
@@ -102,6 +106,11 @@ public:
     std::unique_ptr<ccl_algorithm_selector_wrapper<CCL_COLL_LIST>> algorithm_selector;
     std::unique_ptr<ccl_hwloc_wrapper> hwloc_wrapper;
     std::unique_ptr<group_context> global_ctx;
+    std::atomic<size_t> kernel_counter;
+
+#ifdef MULTI_GPU_SUPPORT
+    std::unique_ptr<ze::cache> ze_cache;
+#endif // MULTI_GPU_SUPPORT
 
     static thread_local bool is_worker_thread;
     bool is_ft_enabled;
@@ -115,6 +124,11 @@ private:
     void init_resize_independent_objects();
     void reset_resize_independent_objects();
 
+#ifdef MULTI_GPU_SUPPORT
+    void init_gpu();
+    void finalize_gpu();
+#endif // MULTI_GPU_SUPPORT
+
     env_data env_object;
 };
 
@@ -127,4 +141,4 @@ private:
         } while (0); \
     }
 
-} /* namespace ccl */
+} // namespace ccl

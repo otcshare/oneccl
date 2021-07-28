@@ -206,6 +206,8 @@ void do_regular(ccl::communicator& service_comm,
         }
     }
 
+    ccl::barrier(service_comm);
+
     PRINT_BY_ROOT(service_comm, "\n# All done\n");
 }
 
@@ -480,7 +482,7 @@ void create_sycl_colls(bench_init_attr& init_attr, user_options_t& options, coll
                                " - empty colls, reason: " + coll_processing_log);
     }
 }
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 template <class Dtype>
 void create_colls(bench_init_attr& init_attr, user_options_t& options, coll_list_t& colls) {
@@ -547,7 +549,7 @@ int main(int argc, char* argv[]) {
 #ifdef CCL_ENABLE_SYCL
     init_attr.sycl_mem_type = options.sycl_mem_type;
     init_attr.sycl_usm_type = options.sycl_usm_type;
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
     try {
         create_all_colls(init_attr, options, colls);

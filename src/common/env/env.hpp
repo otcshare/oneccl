@@ -35,7 +35,9 @@ constexpr const char* CCL_ENV_STR_NOT_SPECIFIED = "<not specified>";
 constexpr const ssize_t CCL_ENV_SIZET_NOT_SPECIFIED = -1;
 
 constexpr const char* CCL_LOG_LEVEL = "CCL_LOG_LEVEL";
+constexpr const char* CCL_QUEUE_DUMP = "CCL_QUEUE_DUMP";
 constexpr const char* CCL_SCHED_DUMP = "CCL_SCHED_DUMP";
+constexpr const char* CCL_SCHED_PROFILE = "CCL_SCHED_PROFILE";
 
 constexpr const char* CCL_FRAMEWORK = "CCL_FRAMEWORK";
 
@@ -56,6 +58,7 @@ constexpr const char* CCL_ATL_SYNC_COLL = "CCL_ATL_SYNC_COLL";
 constexpr const char* CCL_ATL_EXTRA_EP = "CCL_ATL_EXTRA_EP";
 
 constexpr const char* CCL_MNIC = "CCL_MNIC";
+constexpr const char* CCL_MNIC_NAME = "CCL_MNIC_NAME";
 constexpr const char* CCL_MNIC_COUNT = "CCL_MNIC_COUNT";
 
 constexpr const char* CCL_ALLGATHERV = "CCL_ALLGATHERV";
@@ -84,6 +87,7 @@ constexpr const char* CCL_CACHE_KEY = "CCL_CACHE_KEY";
 constexpr const char* CCL_CACHE_FLUSH = "CCL_CACHE_FLUSH";
 constexpr const char* CCL_STRICT_ORDER = "CCL_STRICT_ORDER";
 constexpr const char* CCL_STAGING_BUFFER = "CCL_STAGING_BUFFER";
+constexpr const char* CCL_OP_SYNC = "CCL_OP_SYNC";
 
 constexpr const char* CCL_CHUNK_COUNT = "CCL_CHUNK_COUNT";
 constexpr const char* CCL_MIN_CHUNK_SIZE = "CCL_MIN_CHUNK_SIZE";
@@ -99,10 +103,14 @@ constexpr const char* CCL_ALLTOALL_SCATTER_MAX_OPS = "CCL_ALLTOALL_SCATTER_MAX_O
 constexpr const char* CCL_ALLTOALL_SCATTER_PLAIN = "CCL_ALLTOALL_SCATTER_PLAIN";
 
 constexpr const char* CCL_COMM_KERNELS = "CCL_COMM_KERNELS";
-constexpr const char* CCL_COMM_KERNELS_PATH = "CCL_COMM_KERNELS_PATH";
-constexpr const char* CCL_COMM_KERNELS_DEBUG = "CCL_COMM_KERNELS_DEBUG";
-constexpr const char* CCL_GPU_GROUP_SIZE = "CCL_GPU_GROUP_SIZE";
-constexpr const char* CCL_GPU_GROUP_COUNT = "CCL_GPU_GROUP_COUNT";
+constexpr const char* CCL_KERNEL_PATH = "CCL_KERNEL_PATH";
+constexpr const char* CCL_KERNEL_DEBUG = "CCL_KERNEL_DEBUG";
+constexpr const char* CCL_KERNEL_CACHE = "CCL_KERNEL_CACHE";
+constexpr const char* CCL_KERNEL_GROUP_SIZE = "CCL_KERNEL_GROUP_SIZE";
+constexpr const char* CCL_KERNEL_GROUP_COUNT = "CCL_KERNEL_GROUP_COUNT";
+constexpr const char* CCL_KERNEL_SYNC = "CCL_KERNEL_SYNC";
+constexpr const char* CCL_KERNEL_1S_LEAD = "CCL_KERNEL_1S_LEAD";
+constexpr const char* CCL_ZE_SERIALIZE = "CCL_ZE_SERIALIZE";
 
 constexpr const char* CCL_BF16 = "CCL_BF16";
 constexpr const char* CCL_FP16 = "CCL_FP16";
@@ -134,7 +142,9 @@ public:
     ccl_spinlock print_guard{};
 
     ccl_log_level log_level;
+    int queue_dump;
     int sched_dump;
+    int sched_profile;
 
     ccl_framework_type fw_type;
 
@@ -152,6 +162,7 @@ public:
     int enable_extra_ep;
 
     atl_mnic_t mnic_type;
+    std::string mnic_name_raw;
     ssize_t mnic_count;
 
     /*
@@ -185,6 +196,7 @@ public:
     int enable_cache_flush;
     int enable_strict_order;
     ccl_staging_buffer staging_buffer;
+    int enable_op_sync;
 
     size_t chunk_count;
     size_t min_chunk_size;
@@ -200,10 +212,14 @@ public:
     int alltoall_scatter_plain;
 
     int enable_comm_kernels;
-    std::string comm_kernels_path;
-    int comm_kernels_debug;
-    ssize_t gpu_group_size;
-    ssize_t gpu_group_count;
+    std::string kernel_path;
+    int kernel_debug;
+    int enable_kernel_cache;
+    ssize_t kernel_group_size;
+    ssize_t kernel_group_count;
+    int enable_kernel_sync;
+    int kernel_1s_lead;
+    int ze_serialize_mode;
 
     ccl_bf16_impl_type bf16_impl_type;
     ccl_fp16_impl_type fp16_impl_type;
@@ -280,12 +296,12 @@ public:
     static std::map<ccl_staging_buffer, std::string> staging_buffer_names;
     static std::map<atl_mnic_t, std::string> mnic_type_names;
 
-    int env_2_worker_affinity(size_t local_proc_idx, size_t local_proc_count);
+    int env_2_worker_affinity(int local_proc_idx, int local_proc_count);
     int env_2_worker_mem_affinity();
     void env_2_atl_transport();
 
 private:
-    int env_2_worker_affinity_auto(size_t local_proc_idx, size_t workers_per_process);
+    int env_2_worker_affinity_auto(int local_proc_idx, size_t workers_per_process);
 
     int parse_affinity(const std::string& input,
                        std::vector<ssize_t>& output,
@@ -293,4 +309,4 @@ private:
     int parse_number(const std::string& number_str, size_t& result);
 };
 
-} /* namespace ccl */
+} // namespace ccl

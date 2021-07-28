@@ -27,9 +27,8 @@ ccl_master_sched::~ccl_master_sched() {
     for (auto& part_sched : partial_scheds) {
         part_sched.reset();
     }
-
-    CCL_ASSERT(memory.mr_list.empty(), "memory list is not empty");
-    free_buffers();
+    if (!memory.mr_list.empty())
+        LOG_WARN("memory region list should be empty for master sched");
 }
 
 void ccl_master_sched::commit(ccl_parallelizer* parallelizer) {
@@ -159,17 +158,6 @@ void ccl_master_sched::dump(std::ostream& out) const {
     for (const auto& sched : partial_scheds) {
         sched->dump(out);
     }
-
-#ifdef ENABLE_TIMERS
-    ccl_logger::format(
-        out,
-        "\nlife time [us] ",
-        std::setw(5),
-        std::setbase(10),
-        std::chrono::duration_cast<std::chrono::microseconds>(exec_complete_time - exec_start_time)
-            .count(),
-        "\n");
-#endif
 
     ccl_logger::format(out, "--------------------------------\n");
 }

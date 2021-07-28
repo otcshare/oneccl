@@ -154,7 +154,7 @@ void convert_bf16_to_fp32_arrays(void* recv_buf_bf16, float* recv_buf, int count
         memcpy((recv_buf + i), &int_val_shifted, 4);
     }
 }
-#else /* CCL_BF16_COMPILER */
+#else // CCL_BF16_COMPILER
 
 void convert_fp32_to_bf16_arrays(void* send_buf, void* send_buf_bf16, int count) {
     printf("unsupported\n");
@@ -166,4 +166,4 @@ void convert_bf16_to_fp32_arrays(void* recv_buf_bf16, float* recv_buf, int count
     assert(0);
 }
 
-#endif /* CCL_BF16_COMPILER */
+#endif // CCL_BF16_COMPILER

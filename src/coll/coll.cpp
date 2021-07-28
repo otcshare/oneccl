@@ -60,7 +60,23 @@
 #include "unordered_coll/unordered_coll.hpp"
 
 /* param is not const because param.comm can be updated for unordered colls */
-static ccl_request* ccl_coll_create(ccl_coll_param& param, const ccl_coll_attr& attr) {
+static ccl_request* ccl_coll_create(ccl_coll_param& param, const ccl_coll_attr& in_attr) {
+    ccl_coll_attr& attr = const_cast<ccl_coll_attr&>(in_attr);
+
+#ifdef CCL_ENABLE_SYCL
+    if (ccl::global_data::env().enable_op_sync)
+        attr.synchronous = 1;
+#endif // CCL_ENABLE_SYCL
+
+    LOG_DEBUG("\n{\n",
+              "  param: ",
+              param.to_string(),
+              "\n"
+              "  attr: ",
+              attr.to_string(),
+              "\n"
+              "}");
+
     ccl_coll_validate_user_input(param, attr);
 
     ccl::global_data& data = ccl::global_data::get();
@@ -139,7 +155,7 @@ ccl::status ccl_coll_build_allgatherv(ccl_sched* sched,
     param.recv_counts = recv_counts;
     param.dtype = dtype;
     param.comm = comm;
-    param.vector_buf = sched->coll_attr.vector_buf;
+    param.is_vector_buf = sched->coll_attr.is_vector_buf;
 
     auto algo = ccl::global_data::get().algorithm_selector->get<ccl_coll_allgatherv>(param);
 
@@ -179,6 +195,9 @@ ccl::status ccl_coll_build_allreduce(ccl_sched* sched,
     param.dtype = dtype;
     param.comm = comm;
     param.stream = sched->coll_param.stream;
+#ifdef CCL_ENABLE_SYCL
+    param.is_sycl_buf = sched->coll_attr.is_sycl_buf;
+#endif // CCL_ENABLE_SYCL
 
     auto algo = ccl::global_data::get().algorithm_selector->get<ccl_coll_allreduce>(param);
 
@@ -223,11 +242,11 @@ ccl::status ccl_coll_build_allreduce(ccl_sched* sched,
                 sched, send_buf, recv_buf, count, dtype, reduction));
             break;
 #if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
-        case ccl_coll_allreduce_gpu:
+        case ccl_coll_allreduce_topo_ring:
             CCL_CALL(ccl_coll_build_gpu_allreduce(
                 sched, send_buf, recv_buf, count, dtype, reduction, comm));
             break;
-#endif /* CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT */
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
         default:
             CCL_FATAL("unexpected allreduce_algo ", ccl_coll_algorithm_to_str(algo));
             return ccl::status::invalid_arguments;

@@ -88,6 +88,21 @@ bool operator==(const coll_param_gpu& lhs, const coll_param_gpu& rhs) {
     return res;
 }
 
+std::string ccl_coll_attr::to_string() const {
+    std::stringstream ss;
+
+    ss << "{"
+       << "priority: " << priority << ", sync: " << synchronous << ", to_cache: " << to_cache
+       << ", match_id: " << (!match_id.empty() ? match_id : "<empty>")
+       << ", is_vector_buf: " << is_vector_buf
+#ifdef CCL_ENABLE_SYCL
+       << ", sycl_buf: " << is_sycl_buf
+#endif // CCL_ENABLE_SYCL
+       << "}";
+
+    return ss.str();
+}
+
 ccl_coll_param::ccl_coll_param() {
     ctype = ccl_coll_last_value;
     send_bufs.reserve(1);
@@ -114,6 +129,49 @@ ccl_coll_param::ccl_coll_param(const ccl_coll_param& other) {
     copy_deps(other.deps);
     sparse_param = other.sparse_param;
     validate();
+}
+
+std::string ccl_coll_param::to_string() const {
+    std::stringstream ss;
+
+    ss << "{";
+    ss << "coll: " << ccl_coll_type_to_str(ctype);
+
+    if (!send_bufs.empty())
+        ss << ", sb: " << get_send_buf() << ", sc: " << get_send_count();
+
+    if (!recv_bufs.empty())
+        ss << ", rb: " << get_recv_buf() << ", rc: " << get_recv_count();
+
+    if (ctype != ccl_coll_barrier)
+        ss << ", dt: " << ccl::global_data::get().dtypes->name(dtype);
+
+    if (ctype == ccl_coll_allreduce || ctype == ccl_coll_reduce ||
+        ctype == ccl_coll_reduce_scatter) {
+        ss << ", rt: " << ccl_reduction_to_str(reduction);
+    }
+
+    if (ctype == ccl_coll_bcast || ctype == ccl_coll_reduce) {
+        ss << ", root: " << root;
+    }
+
+    ss << ", comm: ";
+    if (comm)
+        ss << "{rank: " << comm->rank() << ", size: " << comm->size() << "}";
+    else
+        ss << "null";
+
+#ifdef CCL_ENABLE_SYCL
+    if (stream)
+        ss << ", stream: " << stream->to_string();
+#endif // CCL_ENABLE_SYCL
+
+    if (!deps.empty())
+        ss << ", deps: " << deps.size();
+
+    ss << "}";
+
+    return ss.str();
 }
 
 void* ccl_coll_param::get_send_buf(size_t idx, ccl_coll_param::buf_type type) const {
@@ -362,9 +420,9 @@ void ccl_coll_param::copy_deps(const std::vector<ccl::event>& d) {
         catch (ccl::exception&) {
         }
     }
-#else /* CCL_ENABLE_SYCL */
+#else // CCL_ENABLE_SYCL
     CCL_THROW_IF_NOT(d.size() == 0, "host deps are not supported yet");
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 }
 
 void ccl_coll_param::set_common_fields(ccl::datatype d,
@@ -391,7 +449,7 @@ ccl_coll_param ccl_coll_param::create_allgatherv_param(const void* send_buf,
     param.ctype = ccl_coll_allgatherv;
     param.send_bufs.push_back((void*)send_buf);
     param.send_counts.push_back(send_count);
-    if (attr.vector_buf) {
+    if (attr.is_vector_buf) {
         param.recv_bufs.assign((void**)recv_buf, (void**)recv_buf + comm->size());
     }
     else {

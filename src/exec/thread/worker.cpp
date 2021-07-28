@@ -63,11 +63,10 @@ ccl::status ccl_worker::do_work(size_t& processed_count) {
     if (ret != ccl::status::success)
         return ret;
 
-#ifdef ENABLE_DEBUG
-    if (processed_count == 0 && (do_work_counter % CCL_WORKER_PROCESS_ALL_ITERS * 1024) == 0) {
-        //sched_queue->dump(std::cout);
+    if ((do_work_counter % (4 * CCL_WORKER_PROCESS_ALL_ITERS) == 0) &&
+        ccl::global_data::env().queue_dump) {
+        sched_queue->dump(std::cout);
     }
-#endif
 
     return ccl::status::success;
 }
@@ -84,11 +83,12 @@ ccl::status ccl_worker::process_strict_sched_queue() {
         ccl_sched* sched = *sched_it;
 
         if (sched->get_in_bin_status() == ccl_sched_in_bin_erased) {
-            CCL_ASSERT(!sched->bin);
+            CCL_THROW_IF_NOT(!sched->bin, "erased sched should be without bin");
             erased_scheds++;
 
-            /* only single sched in active strict queue can be erased since previous call */
-            CCL_ASSERT(erased_scheds == 1);
+            CCL_THROW_IF_NOT(
+                erased_scheds == 1,
+                "only single sched in active strict queue can be erased since previous call");
 
             /* now it is safe to release this sched */
             sched->req->complete();
@@ -96,17 +96,17 @@ ccl::status ccl_worker::process_strict_sched_queue() {
         }
 
         if (sched->get_in_bin_status() == ccl_sched_in_bin_none) {
-            CCL_ASSERT(!sched->bin, "unexpected bin ", sched->bin);
+            CCL_THROW_IF_NOT(!sched->bin, "unexpected bin ", sched->bin);
             /* here we add sched from strict_queue to regular queue for real execution */
             LOG_DEBUG("add sched ", sched, " from strict_queue to exec_queue, req ", sched->req);
             sched_queue->add(sched);
         }
 
-        CCL_ASSERT(sched->get_in_bin_status() == ccl_sched_in_bin_added,
-                   "sched ",
-                   sched,
-                   " unexpected in_bin_status ",
-                   sched->get_in_bin_status());
+        CCL_THROW_IF_NOT(sched->get_in_bin_status() == ccl_sched_in_bin_added,
+                         "sched ",
+                         sched,
+                         " unexpected in_bin_status ",
+                         sched->get_in_bin_status());
 
         sched->do_progress();
 
@@ -162,7 +162,9 @@ ccl::status ccl_worker::process_sched_bin(ccl_sched_bin* bin, size_t& completed_
     completed_sched_count = 0;
 
     size_t bin_size = bin->size();
-    CCL_ASSERT(bin_size > 0);
+
+    if (bin_size == 0)
+        return ccl::status::success;
 
     LOG_TRACE("bin ", bin, ", sched_count ", bin_size);
 

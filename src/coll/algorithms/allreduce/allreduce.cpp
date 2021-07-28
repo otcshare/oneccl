@@ -510,29 +510,40 @@ ccl::status ccl_coll_build_gpu_allreduce(ccl_sched* sched,
                                          ccl_comm* comm) {
     LOG_DEBUG("build gpu allreduce");
 
-    auto sycl_context = sched->coll_param.stream->get_native_stream().get_context();
-    ze_context_handle_t context = sycl_context.template get_native<cl::sycl::backend::level_zero>();
-
     std::vector<void*> in_buffers(2);
     in_buffers[0] = send_buf.get_ptr();
     in_buffers[1] = recv_buf.get_ptr();
-    entry_factory::make_entry<ze_handle_exchange_entry>(sched, comm, in_buffers, context);
+
+    ccl_coll_entry_param barrier_param{};
+    barrier_param.ctype = ccl_coll_barrier;
+    barrier_param.comm = comm;
+
+    if (sched->coll_attr.to_cache) {
+        sched->set_entry_exec_mode(ccl_sched_entry_exec_once);
+        entry_factory::make_entry<ze_handle_exchange_entry>(sched, comm, in_buffers);
+        sched->add_barrier();
+        sched->set_entry_exec_mode(ccl_sched_entry_exec_regular);
+
+        // TODO: no need barrier for the first iteration where ze_handle_exchange_entry exists
+        // TODO: think about the right way
+        coll_entry_helper::add_coll_entry<ccl_coll_barrier>(sched, barrier_param);
+    }
+    else {
+        entry_factory::make_entry<ze_handle_exchange_entry>(sched, comm, in_buffers);
+    }
 
     sched->add_barrier();
 
-    if (comm->rank() == 0) {
+    if (comm->rank() == ccl::global_data::env().kernel_1s_lead) {
         entry_factory::make_entry<ze_allreduce_entry>(
             sched, send_buf, recv_buf, count, dtype, op, comm);
+        sched->add_barrier();
     }
 
-    ccl_coll_entry_param param{};
-    param.ctype = ccl_coll_barrier;
-    param.dtype = ccl_datatype_int8;
-    param.comm = comm;
     // TODO: think about the right way
-    coll_entry_helper::add_coll_entry<ccl_coll_barrier>(sched, param);
+    coll_entry_helper::add_coll_entry<ccl_coll_barrier>(sched, barrier_param);
 
     return ccl::status::success;
 }
 
-#endif /* CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT */
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT

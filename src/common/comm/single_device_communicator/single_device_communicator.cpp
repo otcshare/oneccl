@@ -130,7 +130,7 @@ ccl::event single_device_communicator::allgatherv_impl(const void* send_buf,
                                                        const ccl::allgatherv_attr& attr,
                                                        const ccl::vector_class<ccl::event>& deps) {
     ccl_coll_attr internal_attr(attr);
-    internal_attr.vector_buf = 1;
+    internal_attr.is_vector_buf = 1;
     return allgatherv_base_impl(send_buf,
                                 send_count,
                                 (void*)(recv_bufs.data()),
@@ -303,6 +303,6 @@ ccl::event single_device_communicator::sparse_allreduce_impl(
 COMM_INTERFACE_COLL_INSTANTIATION(single_device_communicator);
 #ifdef CCL_ENABLE_SYCL
 SYCL_COMM_INTERFACE_COLL_INSTANTIATION(single_device_communicator);
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 #endif //#if defined(MULTI_GPU_SUPPORT) || defined(CCL_ENABLE_SYCL)

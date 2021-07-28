@@ -21,7 +21,7 @@
 
 #ifdef CCL_ENABLE_SYCL
 #include <CL/sycl.hpp>
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 class copy_entry : public sched_entry,
                    public postponed_fields<copy_entry,
@@ -97,9 +97,9 @@ public:
         copier.set_queue(q);
         ccl_tuple_for_each_indexed<ccl_sycl_buffer_one_dim_types>(copier);
         status = ccl_sched_entry_status_started;
-#else /* CCL_ENABLE_SYCL */
+#else // CCL_ENABLE_SYCL
         do_regular_copy();
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
     }
 
     void update() override {
@@ -107,7 +107,7 @@ public:
         if (copier.is_completed()) {
             status = ccl_sched_entry_status_complete;
         }
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
     }
 
     void do_regular_copy() {
@@ -159,5 +159,5 @@ private:
 
 #ifdef CCL_ENABLE_SYCL
     sycl_copier copier;
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 };

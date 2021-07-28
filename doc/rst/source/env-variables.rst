@@ -499,8 +499,12 @@ CCL_WORKER_AFFINITY
        Pin domain depends from process launcher.
        If ``mpirun`` from |product_short| package is used then pin domain is MPI process pin domain.
        Otherwise, pin domain is all cores on the node.
-   * - ``n1,n2,..``
-     - Affinity is explicitly specified for all local workers.
+   * - ``<cpulist>``
+     - A comma-separated list of core numbers and/or ranges of core numbers for all local workers, one number per worker.
+       The i-th local worker is pinned to the i-th core in the list.
+       For example <a>,<b>-<c> defines list of cores contaning core with number <a>
+       and range of cores with numbers from <b> to <c>.
+       The number should not exceed the number of cores available on the system.
 
 **Description**
 
@@ -526,8 +530,10 @@ CCL_WORKER_MEM_AFFINITY
      - Description
    * - ``auto``
      - Workers are automatically pinned to NUMA nodes that correspond to CPU affinity of workers.
-   * - ``n1,n2,..``
-     - NUMA nodes are explicitly specified for all local workers.
+   * - ``<nodelist>``
+     - A comma-separated list of NUMA node numbers for all local workers, one number per worker.
+       The i-th local worker is pinned to the i-th NUMA node in the list.
+       The number should not exceed the number of NUMA nodes available on the system.
 
 **Description**
 
@@ -585,8 +591,16 @@ CCL_MAX_SHORT_SIZE
 Set this environment variable to specify the threshold of the number of bytes for a collective operation to be split.
 
 
+Multi-NIC
+#########
+
+
+CCL_MNIC, CCL_MNIC_NAME and CCL_MNIC_COUNT define filters to select multiple NICs.
+|product_short| workers will be pinned on selected NICs in a round-robin way.
+
+
 CCL_MNIC
-########
+********
 **Syntax**
 
 ::
@@ -611,12 +625,39 @@ CCL_MNIC
 
 **Description**
 
-Set this environment variable to control multi-NIC selection policy.
-|product_short| workers will be pinned on selected NICs in a round-robin way.
+Set this environment variable to control multi-NIC selection by NIC locality.
+
+
+CCL_MNIC_NAME
+*************
+**Syntax**
+
+::
+
+  CCL_MNIC_NAME=<namelist>
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <namelist>
+     - Description
+   * - ``<namelist>``
+     - A comma-separated list of NIC full names or prefixes to filter NICs.
+       Use the ``^`` symbol to exclude NICs starting with the specified prefixes. For example,
+       if you provide a list ``mlx5_0,mlx5_1,^mlx5_2``, NICs with the names ``mlx5_0`` and ``mlx5_1``
+       will be selected, while ``mlx5_2`` will be excluded from the selection.
+
+**Description**
+
+Set this environment variable to control multi-NIC selection by NIC names.
 
 
 CCL_MNIC_COUNT
-##############
+**************
 **Syntax**
 
 ::

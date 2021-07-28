@@ -90,6 +90,8 @@ list (APPEND EXTENSIONS_SRC
 
                     sched/gpu_sched.cpp
                     sched/gpu_concurrent_sched.cpp
+                    sched/entry/gpu/ze_cache.cpp
+                    sched/entry/gpu/ze_call.cpp
                     sched/entry/gpu/ze_primitives.cpp)
 endif(MULTI_GPU_SUPPORT)
 
@@ -189,6 +191,7 @@ set(CCL_SRC
     sched/extra_sched.cpp
     sched/master_sched.cpp
     sched/sched_base.cpp
+    sched/sched_timer.cpp
     sched/cache/cache.cpp
     sched/cache/key.cpp
     sched/queue/flow_control.cpp

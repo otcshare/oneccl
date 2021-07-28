@@ -55,6 +55,7 @@ atl_attr_t ccl_executor::generate_atl_attr(const ccl::env_data& env) {
     attr.in.enable_extra_ep = env.enable_extra_ep;
     attr.in.ep_count = calculate_atl_ep_count(env.worker_count);
     attr.in.mnic_type = env.mnic_type;
+    attr.in.mnic_name = env.mnic_name_raw;
     attr.in.mnic_count = env.mnic_count;
 
     memset(&attr.out, 0, sizeof(attr.out));
@@ -82,7 +83,7 @@ ccl_executor::ccl_executor(const char* main_addr) {
     atl_wrapper::set_exec(this);
 }
 
-void ccl_executor::start_workers(size_t proc_idx, size_t proc_count) {
+void ccl_executor::start_workers(int proc_idx, int proc_count) {
     set_local_coord(proc_idx, proc_count);
     auto& env = ccl::global_data::env();
     CCL_THROW_IF_NOT(env.env_2_worker_affinity(get_local_proc_idx(), get_local_proc_count()));
@@ -244,6 +245,8 @@ void ccl_executor::start(ccl_master_sched* sched) {
     size_t worker_idx;
     for (size_t idx = 0; idx < sched->partial_scheds.size(); idx++) {
         worker_idx = (this->*get_worker_idx_fn)(sched->partial_scheds[idx].get());
+        LOG_DEBUG(
+            "worker idx: ", worker_idx, ", coll: ", ccl_coll_type_to_str(sched->coll_param.ctype));
         workers[worker_idx]->add(sched->partial_scheds[idx].get());
     }
 }
@@ -283,7 +286,7 @@ void ccl_executor::do_work() {
     }
 }
 
-void ccl_executor::set_local_coord(size_t proc_idx, size_t proc_count) {
+void ccl_executor::set_local_coord(int proc_idx, int proc_count) {
     local_proc_idx = proc_idx;
     local_proc_count = proc_count;
     auto& env = ccl::global_data::env();
@@ -294,8 +297,8 @@ void ccl_executor::set_local_coord(size_t proc_idx, size_t proc_count) {
         char* local_idx_env = getenv(local_idx_env_name);
         char* local_count_env = getenv(local_count_env_name);
         if (local_idx_env && local_count_env) {
-            size_t local_idx = std::atoi(local_idx_env);
-            size_t local_count = std::atoi(local_count_env);
+            int local_idx = std::atoi(local_idx_env);
+            int local_count = std::atoi(local_count_env);
             CCL_THROW_IF_NOT(local_idx == local_proc_idx,
                              "unexpected local_proc_idx ",
                              local_proc_idx,

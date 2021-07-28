@@ -230,7 +230,7 @@ ccl::event host_communicator::allgatherv_impl(const void* send_buf,
                                               const ccl::allgatherv_attr& attr,
                                               const ccl::vector_class<ccl::event>& deps) {
     ccl_coll_attr internal_attr(attr);
-    internal_attr.vector_buf = 1;
+    internal_attr.is_vector_buf = 1;
 
     ccl_request* req = ccl_allgatherv_impl(reinterpret_cast<const void*>(send_buf),
                                            send_count,
@@ -434,6 +434,6 @@ std::string host_communicator::to_string() const {
 COMM_INTERFACE_COLL_INSTANTIATION(host_communicator);
 #ifdef CCL_ENABLE_SYCL
 SYCL_COMM_INTERFACE_COLL_INSTANTIATION(host_communicator);
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 } // namespace ccl

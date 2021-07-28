@@ -26,9 +26,9 @@
 #include "common/utils/buffer.hpp"
 #include "sched/entry/entry.hpp"
 
-#if defined(CCL_ENABLE_SYCL) and defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
 #include "sched/ze_handle_manager.hpp"
-#endif /* CCL_ENABLE_SYCL and MULTI_GPU_SUPPORT */
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
 
 class ccl_sched_queue;
 class ccl_sched_bin;
@@ -66,7 +66,7 @@ struct ccl_sched_sycl_buffer_handler : public ccl_sched_buffer_handler {
             : ccl_sched_buffer_handler(buffer, size),
               ctx(ctx) {}
 };
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
 struct ccl_sched_memory {
     std::list<ccl_sched_buffer_handler> buf_list;
@@ -76,8 +76,8 @@ struct ccl_sched_memory {
     std::list<ccl_sched_sycl_buffer_handler> sycl_buf_list;
 #ifdef MULTI_GPU_SUPPORT
     ze_handle_manager handle_manager;
-#endif /* MULTI_GPU_SUPPORT */
-#endif /* CCL_ENABLE_SYCL */
+#endif // MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_SYCL
 };
 
 static size_t lifo_priority = 0;
@@ -100,14 +100,15 @@ struct ccl_sched_base {
 
 #ifdef CCL_ENABLE_SYCL
     ccl_buffer alloc_staging_buffer(size_t bytes);
-#endif /* CCL_ENABLE_SYCL */
+#endif // CCL_ENABLE_SYCL
 
-    void free_buffers();
+    void add_memory_region(atl_mr_t* mr);
+    void free_memory_regions();
+
+    void free_memory();
 
     ccl_buffer update_buffer(ccl_buffer buffer, size_t new_size);
     ccl_buffer find_and_realloc_buffer(void* buffer, size_t new_size, size_t expected_size = 0);
-
-    void add_memory_region(atl_mr_t* mr);
 
     void get_pre_post_copy_counts(std::vector<size_t>& d2h_counts,
                                   std::vector<size_t>& h2d_counts,
@@ -141,18 +142,18 @@ struct ccl_sched_base {
     }
 
 protected:
-    ~ccl_sched_base() = default;
+    ~ccl_sched_base();
 
     ccl_sched_base() {
         CCL_THROW("unsupported");
     }
 
     ccl_sched_base(const ccl_coll_param& coll_param) : coll_param(coll_param) {
-#if defined(CCL_ENABLE_SYCL) and defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
         if (coll_param.stream != nullptr) {
             memory.handle_manager.init(coll_param.stream);
         }
-#endif /* CCL_ENABLE_SYCL and MULTI_GPU_SUPPORT */
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
     }
 
     void update_id();

@@ -16,6 +16,7 @@
 #pragma once
 
 #include "common/log/log.hpp"
+#include "ze_call.hpp"
 
 #include <fstream>
 #include <initializer_list>
@@ -27,22 +28,43 @@ namespace ccl {
 
 namespace ze {
 
-#define ZE_CALL(ze_api_call) \
+#define ZE_CALL(ze_name, ze_args) \
     do { \
-        if (ze_api_call != ZE_RESULT_SUCCESS) { \
-            CCL_THROW("error at ", #ze_api_call); \
-        } \
+        ccl::ze::ze_call ze; \
+        ze.do_call(ze_name ze_args, #ze_name); \
     } while (0);
 
-constexpr ze_command_list_desc_t default_cmd_list_desc = {};
-constexpr ze_device_mem_alloc_desc_t default_device_mem_alloc_desc = {};
-constexpr ze_kernel_desc_t default_kernel_desc = {};
-constexpr ze_fence_desc_t default_fence_desc = {};
+constexpr ze_fence_desc_t default_fence_desc = { .stype = ZE_STRUCTURE_TYPE_FENCE_DESC,
+                                                 .pNext = NULL,
+                                                 .flags = 0 };
+
+constexpr ze_kernel_desc_t default_kernel_desc = { .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC,
+                                                   .pNext = nullptr,
+                                                   .flags = 0,
+                                                   .pKernelName = nullptr };
+
+constexpr ze_command_list_desc_t default_cmd_list_desc = {
+    .stype = ZE_STRUCTURE_TYPE_COMMAND_LIST_DESC,
+    .pNext = NULL,
+    .commandQueueGroupOrdinal = 0,
+    .flags = 0,
+};
+
 constexpr ze_command_queue_desc_t default_comp_queue_desc = {
+    .stype = ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC,
+    .pNext = nullptr,
     .ordinal = 0,
     .index = 0,
+    .flags = 0,
     .mode = ZE_COMMAND_QUEUE_MODE_ASYNCHRONOUS,
     .priority = ZE_COMMAND_QUEUE_PRIORITY_NORMAL
+};
+
+constexpr ze_device_mem_alloc_desc_t default_device_mem_alloc_desc = {
+    .stype = ZE_STRUCTURE_TYPE_DEVICE_MEM_ALLOC_DESC,
+    .pNext = NULL,
+    .flags = 0,
+    .ordinal = 0
 };
 
 void load_module(std::string dir,
@@ -59,8 +81,6 @@ struct ze_group_size_t {
     uint32_t groupSizeZ = 0;
 };
 
-std::string to_string(const ze_group_size_t& group_size);
-std::string to_string(const ze_group_count_t& group_count);
 void get_suggested_group_size(ze_kernel_handle_t kernel, size_t count, ze_group_size_t* group_size);
 void get_suggested_group_count(const ze_group_size_t& group_size,
                                size_t count,
@@ -68,8 +88,6 @@ void get_suggested_group_count(const ze_group_size_t& group_size,
 
 using ze_kernel_arg_t = std::pair<size_t, const void*>;
 using ze_kernel_args_t = std::initializer_list<ze_kernel_arg_t>;
-
-std::string to_string(const ze_kernel_args_t& kernel_args);
 void set_kernel_args(ze_kernel_handle_t kernel, const ze_kernel_args_t& kernel_args);
 
 using ze_queue_properties_t = std::vector<ze_command_queue_group_properties_t>;
@@ -86,5 +104,9 @@ void get_queue_index(const ze_queue_properties_t& props,
                      int rank,
                      uint32_t* index);
 
+std::string to_string(const ze_result_t result);
+std::string to_string(const ze_group_size_t& group_size);
+std::string to_string(const ze_group_count_t& group_count);
+std::string to_string(const ze_kernel_args_t& kernel_args);
 } // namespace ze
 } // namespace ccl
