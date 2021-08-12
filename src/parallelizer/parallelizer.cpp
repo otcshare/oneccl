@@ -18,6 +18,7 @@
 
 #include "coll/selection/selection.hpp"
 #include "common/global/global.hpp"
+#include "common/utils/sycl_utils.hpp"
 #include "parallelizer/parallelizer.hpp"
 #include "sched/entry/coll/coll_entry_helper.hpp"
 #include "sched/entry/factory/entry_factory.hpp"
@@ -97,10 +98,16 @@ ccl::status ccl_parallelizer::process(ccl_master_sched* sched) {
     selector_param.is_sycl_buf = sched->coll_attr.is_sycl_buf;
 
     ccl_coll_allreduce_algo allreduce_algo = ccl_coll_allreduce_last_value;
-    if (selector_param.ctype == ccl_coll_allreduce)
+    if (selector_param.ctype == ccl_coll_allreduce) {
         allreduce_algo = data.algorithm_selector->get<ccl_coll_allreduce>(selector_param);
+    }
 
-    if (allreduce_algo != ccl_coll_allreduce_topo_ring) {
+    ccl_coll_bcast_algo bcast_algo = ccl_coll_bcast_last_value;
+    if (selector_param.ctype == ccl_coll_bcast) {
+        bcast_algo = data.algorithm_selector->get<ccl_coll_bcast>(selector_param);
+    }
+
+    if (allreduce_algo != ccl_coll_allreduce_topo_ring && bcast_algo != ccl_coll_bcast_topo_ring) {
         ccl_coll_param& param = sched->coll_param;
         if (param.stream && param.stream->is_sycl_device_stream() &&
             (!param.device_send_bufs.empty() || !param.device_recv_bufs.empty())) {
@@ -113,6 +120,20 @@ ccl::status ccl_parallelizer::process(ccl_master_sched* sched) {
        because it sets dependencies for all partial schedules
        which already should be filled */
     process_deps(sched);
+
+#ifdef CCL_ENABLE_SYCL
+    if (ccl::utils::should_use_sycl_output_event(sched->coll_param.stream)) {
+        auto& part_scheds = sched->partial_scheds;
+        size_t sched_count = part_scheds.size();
+
+        for (size_t idx = 0; idx < sched_count; idx++) {
+            part_scheds[idx]->set_add_mode(ccl_sched_add_back);
+        }
+        sched->sync_partial_scheds();
+
+        entry_factory::make_entry<ze_event_signal_entry>(part_scheds[0].get(), sched);
+    }
+#endif
 
     return ccl::status::success;
 }
@@ -138,7 +159,6 @@ ccl::status ccl_parallelizer::process_pre_post_copies(ccl_master_sched* sched) {
     auto& part_scheds = sched->partial_scheds;
     size_t sched_count = part_scheds.size();
     ccl_coll_param& coll_param = sched->coll_param;
-    ccl_coll_attr& coll_attr = sched->coll_attr;
     ccl_comm* comm = coll_param.comm;
     int my_rank = comm->rank();
     const ccl_datatype& dtype = coll_param.dtype;
@@ -175,18 +195,15 @@ ccl::status ccl_parallelizer::process_pre_post_copies(ccl_master_sched* sched) {
             size_t count = d2h_counts[idx];
             size_t bytes = count * dtype_size;
 
-            entry_factory::make_entry<sycl_copy_entry>(
+            entry_factory::make_entry<copy_entry>(
                 part_scheds[sched_idx].get(),
-                copy_direction::d2h,
                 ccl_buffer(coll_param.get_send_buf_ptr(idx, ccl_coll_param::buf_type::device),
                            bytes,
                            ccl_buffer_type::INDIRECT),
                 ccl_buffer(coll_param.get_send_buf(idx), bytes),
                 count,
                 dtype,
-                coll_param.stream,
-                coll_attr.is_sycl_buf,
-                device_in_buf_offset);
+                copy_attr(copy_helper::invalid_rank, copy_direction::d2h, device_in_buf_offset));
         }
     }
 
@@ -201,17 +218,15 @@ ccl::status ccl_parallelizer::process_pre_post_copies(ccl_master_sched* sched) {
             size_t count = h2d_counts[idx];
             size_t bytes = count * dtype_size;
 
-            entry_factory::make_entry<sycl_copy_entry>(
+            entry_factory::make_entry<copy_entry>(
                 part_scheds[sched_idx].get(),
-                copy_direction::h2d,
                 ccl_buffer(coll_param.get_recv_buf(idx), bytes),
                 ccl_buffer(coll_param.get_recv_buf_ptr(idx, ccl_coll_param::buf_type::device),
                            bytes,
                            ccl_buffer_type::INDIRECT),
                 count,
                 dtype,
-                coll_param.stream,
-                coll_attr.is_sycl_buf);
+                copy_attr(copy_helper::invalid_rank, copy_direction::h2d, 0));
         }
 
         sched->sync_partial_scheds();

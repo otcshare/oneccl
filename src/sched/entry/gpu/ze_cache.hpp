@@ -16,7 +16,7 @@
 #pragma once
 
 #include "common/utils/hash.hpp"
-#include "ze_primitives.hpp"
+#include "sched/entry/gpu/ze_primitives.hpp"
 
 #include <unordered_map>
 
@@ -113,6 +113,58 @@ private:
     std::unordered_multimap<key_t, value_t, utils::tuple_hash> cache;
 };
 
+class event_pool_cache {
+public:
+    event_pool_cache() = default;
+    ~event_pool_cache();
+
+    void clear();
+
+    void get(ze_context_handle_t context,
+             ze_event_pool_desc_t* pool_desc,
+             ze_event_pool_handle_t* event_pool);
+
+    void push(ze_context_handle_t context,
+              ze_event_pool_desc_t* pool_desc,
+              ze_event_pool_handle_t* event_pool);
+
+private:
+    using key_t = typename std::tuple<ze_context_handle_t, ze_event_pool_flags_t, uint32_t>;
+    using value_t = ze_event_pool_handle_t;
+    std::unordered_multimap<key_t, value_t, utils::tuple_hash> cache;
+};
+
+class device_mem_cache {
+public:
+    device_mem_cache() = default;
+    ~device_mem_cache();
+
+    void clear();
+
+    void get(ze_context_handle_t context,
+             ze_device_handle_t device,
+             ze_device_mem_alloc_desc_t* device_mem_alloc_desc,
+             size_t size_bytes,
+             size_t alignment,
+             void** pptr);
+
+    void push(ze_context_handle_t context,
+              ze_device_handle_t device,
+              ze_device_mem_alloc_desc_t* device_mem_alloc_desc,
+              size_t size_bytes,
+              size_t alignment,
+              void** pptr);
+
+private:
+    using key_t = typename std::tuple<ze_context_handle_t,
+                                      ze_device_handle_t,
+                                      size_t,
+                                      ze_device_mem_alloc_flags_t,
+                                      uint32_t>;
+    using value_t = void*;
+    std::unordered_multimap<key_t, value_t, utils::tuple_hash> cache;
+};
+
 class module_cache {
 public:
     module_cache() = default;
@@ -120,15 +172,24 @@ public:
 
     void clear();
 
-    void get(ze_context_handle_t context, ze_device_handle_t device, ze_module_handle_t* module);
+    void get(ze_context_handle_t context,
+             ze_device_handle_t device,
+             ze_module_handle_t* module,
+             std::string spv_name);
 
 private:
     using key_t = ze_device_handle_t;
     using value_t = ze_module_handle_t;
-    std::unordered_multimap<ze_device_handle_t, ze_module_handle_t> cache;
+    std::unordered_multimap<std::tuple<ze_device_handle_t, std::string>,
+                            ze_module_handle_t,
+                            utils::tuple_hash>
+        cache;
     std::mutex mutex;
 
-    void load(ze_context_handle_t context, ze_device_handle_t device, ze_module_handle_t* module);
+    void load(ze_context_handle_t context,
+              ze_device_handle_t device,
+              ze_module_handle_t* module,
+              std::string spv_name);
 };
 
 class cache {
@@ -137,7 +198,9 @@ public:
             : fences(instance_count),
               kernels(instance_count),
               lists(instance_count),
-              queues(instance_count) {}
+              queues(instance_count),
+              event_pools(instance_count),
+              device_mems(instance_count) {}
     cache(const cache&) = delete;
     cache& operator=(const cache&) = delete;
     ~cache();
@@ -173,8 +236,29 @@ public:
         queues.at(worker_idx).get(context, device, queue_desc, queue);
     }
 
-    void get(ze_context_handle_t context, ze_device_handle_t device, ze_module_handle_t* module) {
-        modules.get(context, device, module);
+    void get(size_t worker_idx,
+             ze_context_handle_t context,
+             ze_event_pool_desc_t* pool_desc,
+             ze_event_pool_handle_t* event_pool) {
+        event_pools.at(worker_idx).get(context, pool_desc, event_pool);
+    }
+
+    void get(size_t worker_idx,
+             ze_context_handle_t context,
+             ze_device_handle_t device,
+             ze_device_mem_alloc_desc_t* device_mem_alloc_desc,
+             size_t size_bytes,
+             size_t alignment,
+             void** pptr) {
+        device_mems.at(worker_idx)
+            .get(context, device, device_mem_alloc_desc, size_bytes, alignment, pptr);
+    }
+
+    void get(ze_context_handle_t context,
+             ze_device_handle_t device,
+             ze_module_handle_t* module,
+             std::string spv_name) {
+        modules.get(context, device, module, spv_name);
     }
 
     /* push */
@@ -208,11 +292,31 @@ public:
         queues.at(worker_idx).push(context, device, queue_desc, queue);
     }
 
+    void push(size_t worker_idx,
+              ze_context_handle_t context,
+              ze_event_pool_desc_t* pool_desc,
+              ze_event_pool_handle_t* event_pool) {
+        event_pools.at(worker_idx).push(context, pool_desc, event_pool);
+    }
+
+    void push(size_t worker_idx,
+              ze_context_handle_t context,
+              ze_device_handle_t device,
+              ze_device_mem_alloc_desc_t* device_mem_alloc_desc,
+              size_t size_bytes,
+              size_t alignment,
+              void** pptr) {
+        device_mems.at(worker_idx)
+            .push(context, device, device_mem_alloc_desc, size_bytes, alignment, pptr);
+    }
+
 private:
     std::vector<fence_cache> fences;
     std::vector<kernel_cache> kernels;
     std::vector<list_cache> lists;
     std::vector<queue_cache> queues;
+    std::vector<event_pool_cache> event_pools;
+    std::vector<device_mem_cache> device_mems;
     module_cache modules;
 };
 

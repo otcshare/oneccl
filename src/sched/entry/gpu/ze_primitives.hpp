@@ -16,7 +16,7 @@
 #pragma once
 
 #include "common/log/log.hpp"
-#include "ze_call.hpp"
+#include "sched/entry/gpu/ze_call.hpp"
 
 #include <fstream>
 #include <initializer_list>
@@ -35,7 +35,7 @@ namespace ze {
     } while (0);
 
 constexpr ze_fence_desc_t default_fence_desc = { .stype = ZE_STRUCTURE_TYPE_FENCE_DESC,
-                                                 .pNext = NULL,
+                                                 .pNext = nullptr,
                                                  .flags = 0 };
 
 constexpr ze_kernel_desc_t default_kernel_desc = { .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC,
@@ -45,7 +45,7 @@ constexpr ze_kernel_desc_t default_kernel_desc = { .stype = ZE_STRUCTURE_TYPE_KE
 
 constexpr ze_command_list_desc_t default_cmd_list_desc = {
     .stype = ZE_STRUCTURE_TYPE_COMMAND_LIST_DESC,
-    .pNext = NULL,
+    .pNext = nullptr,
     .commandQueueGroupOrdinal = 0,
     .flags = 0,
 };
@@ -62,10 +62,22 @@ constexpr ze_command_queue_desc_t default_comp_queue_desc = {
 
 constexpr ze_device_mem_alloc_desc_t default_device_mem_alloc_desc = {
     .stype = ZE_STRUCTURE_TYPE_DEVICE_MEM_ALLOC_DESC,
-    .pNext = NULL,
+    .pNext = nullptr,
     .flags = 0,
     .ordinal = 0
 };
+
+constexpr ze_event_pool_desc_t default_event_pool_desc = { .stype =
+                                                               ZE_STRUCTURE_TYPE_EVENT_POOL_DESC,
+                                                           .pNext = nullptr,
+                                                           .flags = 0,
+                                                           .count = 0 };
+
+constexpr ze_event_desc_t default_event_desc = { .stype = ZE_STRUCTURE_TYPE_EVENT_DESC,
+                                                 .pNext = nullptr,
+                                                 .index = 0,
+                                                 .signal = 0,
+                                                 .wait = 0 };
 
 void load_module(std::string dir,
                  std::string file_name,
@@ -74,7 +86,8 @@ void load_module(std::string dir,
                  ze_module_handle_t* module);
 void create_kernel(ze_module_handle_t module, std::string kernel_name, ze_kernel_handle_t* kernel);
 
-// This structure is just to align with l0 ze_group_count_t for convenience. l0 has no ze_group_size_t
+// this structure is just to align with ze_group_count_t
+// L0 doesn't have ze_group_size_t
 struct ze_group_size_t {
     uint32_t groupSizeX = 0;
     uint32_t groupSizeY = 0;
@@ -108,5 +121,6 @@ std::string to_string(const ze_result_t result);
 std::string to_string(const ze_group_size_t& group_size);
 std::string to_string(const ze_group_count_t& group_count);
 std::string to_string(const ze_kernel_args_t& kernel_args);
+
 } // namespace ze
 } // namespace ccl

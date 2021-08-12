@@ -42,7 +42,7 @@ void ccl_sched_base::set_coll_attr(const ccl_coll_attr& attr) {
 void ccl_sched_base::update_coll_param_and_attr(const ccl_coll_param& param,
                                                 const ccl_coll_attr& attr) {
 #ifdef CCL_ENABLE_SYCL
-    coll_param.copy_deps(param.deps);
+    coll_param.sync_deps(param.stream, param.deps);
 #endif // CCL_ENABLE_SYCL
 
     bool has_pre_post_copies =
@@ -391,8 +391,13 @@ void ccl_sched_base::alloc_buffers_for_pre_post_copy() {
         allreduce_algo = data.algorithm_selector->get<ccl_coll_allreduce>(selector_param);
     }
 
+    ccl_coll_bcast_algo bcast_algo = ccl_coll_bcast_last_value;
+    if (param.ctype == ccl_coll_bcast) {
+        bcast_algo = data.algorithm_selector->get<ccl_coll_bcast>(selector_param);
+    }
+
     if (!param.stream || !param.stream->is_sycl_device_stream() ||
-        allreduce_algo == ccl_coll_allreduce_topo_ring) {
+        allreduce_algo == ccl_coll_allreduce_topo_ring || bcast_algo == ccl_coll_bcast_topo_ring) {
         return;
     }
 

@@ -21,7 +21,8 @@ std::map<ccl_coll_bcast_algo, std::string>
         std::make_pair(ccl_coll_bcast_direct, "direct"),
         std::make_pair(ccl_coll_bcast_ring, "ring"),
         std::make_pair(ccl_coll_bcast_double_tree, "double_tree"),
-        std::make_pair(ccl_coll_bcast_naive, "naive")
+        std::make_pair(ccl_coll_bcast_naive, "naive"),
+        std::make_pair(ccl_coll_bcast_topo_ring, "topo_ring")
     };
 
 ccl_algorithm_selector<ccl_coll_bcast>::ccl_algorithm_selector() {
@@ -53,6 +54,8 @@ bool ccl_algorithm_selector_helper<ccl_coll_bcast_algo>::can_use(
     }
     else if (algo == ccl_coll_bcast_direct &&
              (ccl::global_data::env().atl_transport == ccl_atl_ofi))
+        can_use = false;
+    else if (algo == ccl_coll_bcast_topo_ring && !ccl_can_use_topo_ring_algo(param))
         can_use = false;
 
     return can_use;
