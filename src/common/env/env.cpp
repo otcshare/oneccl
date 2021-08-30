@@ -44,6 +44,12 @@ std::map<ccl_atl_transport, std::string> env_data::atl_transport_names = {
 #endif // CCL_ENABLE_MPI
 };
 
+std::map<ccl_atl_send_proxy, std::string> env_data::atl_send_proxy_names = {
+    std::make_pair(ccl_atl_send_proxy_none, "none"),
+    std::make_pair(ccl_atl_send_proxy_regular, "regular"),
+    std::make_pair(ccl_atl_send_proxy_usm, "usm")
+};
+
 std::map<ccl_staging_buffer, std::string> env_data::staging_buffer_names = {
     std::make_pair(ccl_staging_regular, "regular"),
     std::make_pair(ccl_staging_usm, "usm")
@@ -53,6 +59,12 @@ std::map<atl_mnic_t, std::string> env_data::mnic_type_names = {
     std::make_pair(ATL_MNIC_NONE, "none"),
     std::make_pair(ATL_MNIC_LOCAL, "local"),
     std::make_pair(ATL_MNIC_GLOBAL, "global")
+};
+
+std::map<ccl_ze_copy_engine_mode, std::string> env_data::ze_copy_engine_names = {
+    std::make_pair(ccl_ze_copy_engine_none, "none"),
+    std::make_pair(ccl_ze_copy_engine_main, "main"),
+    std::make_pair(ccl_ze_copy_engine_link, "link")
 };
 
 env_data::env_data()
@@ -75,7 +87,9 @@ env_data::env_data()
 #endif // CCL_ENABLE_MPI
           enable_shm(0),
           enable_rma(0),
-          enable_device_buf(0),
+          enable_hmem(0),
+          atl_send_proxy(ccl_atl_send_proxy_none),
+          enable_atl_cache(1),
           enable_sync_coll(0),
           enable_extra_ep(0),
 
@@ -101,6 +115,7 @@ env_data::env_data()
 #else // CCL_ENABLE_SYCL
           enable_cache_flush(0),
 #endif // CCL_ENABLE_SYCL
+          enable_buffer_cache(1),
           enable_strict_order(0),
           staging_buffer(ccl_staging_usm),
           enable_op_sync(0),
@@ -118,7 +133,6 @@ env_data::env_data()
           alltoall_scatter_max_ops(CCL_ENV_SIZET_NOT_SPECIFIED),
           alltoall_scatter_plain(0),
 
-          enable_comm_kernels(0),
           kernel_path(),
           kernel_debug(0),
           enable_kernel_cache(1),
@@ -130,6 +144,7 @@ env_data::env_data()
           enable_kernel_1s_ipc_wa(0),
           enable_kernel_output_event(0),
           ze_serialize_mode(0),
+          ze_copy_engine(ccl_ze_copy_engine_none),
 
           bf16_impl_type(ccl_bf16_no_compiler_support),
           fp16_impl_type(ccl_fp16_no_compiler_support) {
@@ -173,7 +188,12 @@ void env_data::parse() {
     env_2_atl_transport();
     env_2_type(CCL_ATL_SHM, enable_shm);
     env_2_type(CCL_ATL_RMA, enable_rma);
-    env_2_type(CCL_ATL_DEVICE_BUF, enable_device_buf);
+    env_2_type(CCL_ATL_HMEM, enable_hmem);
+    if (atl_transport == ccl_atl_mpi && enable_hmem) {
+        worker_count = 1;
+    }
+    env_2_enum(CCL_ATL_SEND_PROXY, atl_send_proxy_names, atl_send_proxy);
+    env_2_type(CCL_ATL_CACHE, enable_atl_cache);
     env_2_type(CCL_ATL_SYNC_COLL, enable_sync_coll);
     env_2_type(CCL_ATL_EXTRA_EP, enable_extra_ep);
 
@@ -229,6 +249,7 @@ void env_data::parse() {
     env_2_type(CCL_BCAST_PART_COUNT, (size_t&)bcast_part_count);
     env_2_enum(CCL_CACHE_KEY, ccl_sched_key::key_type_names, cache_key_type);
     env_2_type(CCL_CACHE_FLUSH, enable_cache_flush);
+    env_2_type(CCL_BUFFER_CACHE, enable_buffer_cache);
     env_2_type(CCL_STRICT_ORDER, enable_strict_order);
     if (enable_unordered_coll && enable_strict_order) {
         LOG_INFO("unordered collectives are requested, disable strict order");
@@ -261,19 +282,13 @@ void env_data::parse() {
     env_2_type(CCL_ALLTOALL_SCATTER_MAX_OPS, (size_t&)alltoall_scatter_max_ops);
     env_2_type(CCL_ALLTOALL_SCATTER_PLAIN, alltoall_scatter_plain);
 
-    env_2_type(CCL_COMM_KERNELS, enable_comm_kernels);
-
-    if (enable_comm_kernels) {
-#ifndef MULTI_GPU_SUPPORT
-        CCL_THROW("comm kernels are requested but not supported in this version of CCL");
-#endif
-        env_2_type(CCL_KERNEL_PATH, kernel_path);
-        if (kernel_path.empty()) {
-            std::string ccl_root = getenv("CCL_ROOT");
-            CCL_THROW_IF_NOT(!ccl_root.empty(), "incorrect comm kernels path, CCL_ROOT not found!");
-            kernel_path = ccl_root + "/lib/kernels/";
-        }
+    env_2_type(CCL_KERNEL_PATH, kernel_path);
+    if (kernel_path.empty()) {
+        std::string ccl_root = getenv("CCL_ROOT");
+        CCL_THROW_IF_NOT(!ccl_root.empty(), "incorrect comm kernels path, CCL_ROOT not found!");
+        kernel_path = ccl_root + "/lib/kernels/";
     }
+
     env_2_type(CCL_KERNEL_DEBUG, kernel_debug);
     env_2_type(CCL_KERNEL_CACHE, enable_kernel_cache);
     env_2_type(CCL_KERNEL_GROUP_SIZE, kernel_group_size);
@@ -284,6 +299,7 @@ void env_data::parse() {
     env_2_type(CCL_KERNEL_1S_IPC_WA, enable_kernel_1s_ipc_wa);
     env_2_type(CCL_KERNEL_OUTPUT_EVENT, enable_kernel_output_event);
     env_2_type(CCL_ZE_SERIALIZE, ze_serialize_mode);
+    env_2_enum(CCL_ZE_COPY_ENGINE, ze_copy_engine_names, ze_copy_engine);
 
     auto bf16_impl_types = ccl_bf16_get_impl_types();
     ccl_bf16_impl_type bf16_env_impl_type;
@@ -374,7 +390,9 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_ATL_TRANSPORT, ": ", str_by_enum(atl_transport_names, atl_transport));
     LOG_INFO(CCL_ATL_SHM, ": ", enable_shm);
     LOG_INFO(CCL_ATL_RMA, ": ", enable_rma);
-    LOG_INFO(CCL_ATL_DEVICE_BUF, ": ", enable_device_buf);
+    LOG_INFO(CCL_ATL_HMEM, ": ", enable_hmem);
+    LOG_INFO(CCL_ATL_SEND_PROXY, ": ", str_by_enum(atl_send_proxy_names, atl_send_proxy));
+    LOG_INFO(CCL_ATL_CACHE, ": ", enable_atl_cache);
     LOG_DEBUG(CCL_ATL_SYNC_COLL, ": ", enable_sync_coll);
     LOG_DEBUG(CCL_ATL_EXTRA_EP, ": ", enable_extra_ep);
 
@@ -428,6 +446,7 @@ void env_data::print(int rank) {
                                                                : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_CACHE_KEY, ": ", str_by_enum(ccl_sched_key::key_type_names, cache_key_type));
     LOG_INFO(CCL_CACHE_FLUSH, ": ", enable_cache_flush);
+    LOG_INFO(CCL_BUFFER_CACHE, ": ", enable_buffer_cache);
     LOG_INFO(CCL_STRICT_ORDER, ": ", enable_strict_order);
     LOG_INFO(CCL_STAGING_BUFFER, ": ", str_by_enum(staging_buffer_names, staging_buffer));
     LOG_INFO(CCL_OP_SYNC, ": ", enable_op_sync);
@@ -454,7 +473,6 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_ALLTOALL_SCATTER_PLAIN, ": ", alltoall_scatter_plain);
 
 #ifdef CCL_ENABLE_SYCL
-    LOG_INFO(CCL_COMM_KERNELS, ": ", enable_comm_kernels);
     LOG_INFO(
         CCL_KERNEL_PATH, ": ", (!kernel_path.empty()) ? kernel_path : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_KERNEL_DEBUG, ": ", kernel_debug);
@@ -474,6 +492,7 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_KERNEL_1S_IPC_WA, ": ", enable_kernel_1s_ipc_wa);
     LOG_INFO(CCL_KERNEL_OUTPUT_EVENT, ": ", enable_kernel_output_event);
     LOG_INFO(CCL_ZE_SERIALIZE, ": ", ze_serialize_mode);
+    LOG_INFO(CCL_ZE_COPY_ENGINE, ": ", str_by_enum(ze_copy_engine_names, ze_copy_engine));
 #endif // CCL_ENABLE_SYCL
 
     LOG_INFO(CCL_BF16, ": ", str_by_enum(bf16_impl_names, bf16_impl_type));

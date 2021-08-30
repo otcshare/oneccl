@@ -30,4 +30,5 @@ struct ccl_coll_entry_param {
     int root;
     ccl_comm* comm;
     ccl_stream* stream;
+    ccl_coll_algo hint_algo;
 };

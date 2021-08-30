@@ -15,10 +15,10 @@
 */
 #include "sched/entry/reduce_local_entry.hpp"
 
-#include "coll/coll_check.hpp"
 #include "common/comm/l0/modules/kernel_utils.hpp"
 #include "common/datatype/datatype.hpp"
 #include "common/stream/stream.hpp"
+#include "common/utils/sycl_utils.hpp"
 #include "sched/entry/gpu/ze_primitives.hpp"
 #include "sched/entry/gpu/ze_cache.hpp"
 #include "sched/queue/queue.hpp"
@@ -29,15 +29,15 @@ using namespace ccl;
 using namespace ccl::ze;
 
 void reduce_local_entry::init() {
-    if (is_initialized) {
+    if (ze_base_entry::is_initialized) {
         return;
     }
 
     LOG_DEBUG("initialization");
 
-    ze_base_entry::init();
+    ze_base_entry::init(init_mode::compute);
 
-    ccl::global_data::get().ze_cache->get(context, device, &module, "kernels.spv");
+    ccl::global_data::get().ze_cache->get(context, device, "kernels.spv", &module);
 
     kernel_name =
         "reduce_local_inplace_kernel_" + to_string(dtype.idx()) + "_" + ccl_reduction_to_str(op);
@@ -65,10 +65,13 @@ void reduce_local_entry::init() {
     set_kernel_args(kernel, kernel_args);
 
     ZE_CALL(zeCommandListAppendLaunchKernel,
-            (comp_list, kernel, &group_count, entry_event, 0, nullptr));
-    ZE_CALL(zeCommandListClose, (comp_list));
-
-    is_initialized = true;
+            (ze_base_entry::comp_primitives.list,
+             kernel,
+             &group_count,
+             ze_base_entry::entry_event,
+             0,
+             nullptr));
+    ZE_CALL(zeCommandListClose, (ze_base_entry::comp_primitives.list));
 
     LOG_DEBUG("initialization complete");
 }
@@ -95,9 +98,9 @@ void reduce_local_entry::check_use_device() {
     auto inout_ptr_type = sycl::get_pointer_type(inout_buf.get_ptr(bytes), q->get_context());
 
     LOG_DEBUG("in_ptr_type: ",
-              ccl_usm_type_to_str(in_ptr_type),
+              ccl::utils::usm_type_to_str(in_ptr_type),
               ", inout_ptr_type: ",
-              ccl_usm_type_to_str(inout_ptr_type),
+              ccl::utils::usm_type_to_str(inout_ptr_type),
               ", native_stream: ",
               stream->to_string(),
               ", in_count: ",
@@ -116,24 +119,16 @@ void reduce_local_entry::start_on_device() {
 }
 
 void reduce_local_entry::finalize() {
-    if (!is_initialized) {
+    if (!ze_base_entry::is_initialized) {
         return;
     }
 
     LOG_DEBUG("finalization");
 
-    // module_cache
-    ccl::global_data::get().ze_cache->push(worker_idx, module, kernel_name, &kernel);
-    // list_cache
-    ccl::global_data::get().ze_cache->push(
-        worker_idx, context, device, &comp_list_desc, &comp_list);
-    // queue_cache
-    ccl::global_data::get().ze_cache->push(
-        worker_idx, context, device, &comp_queue_desc, &comp_queue);
+    // kernel cache
+    ccl::global_data::get().ze_cache->push(worker_idx, module, kernel_name, kernel);
 
     ze_base_entry::finalize();
-
-    is_initialized = false;
 
     LOG_DEBUG("finalization complete");
 }

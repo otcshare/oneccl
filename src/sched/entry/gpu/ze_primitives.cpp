@@ -17,6 +17,7 @@
 #include <fstream>
 
 #include "common/global/global.hpp"
+#include "common/log/log.hpp"
 #include "sched/entry/gpu/ze_primitives.hpp"
 
 namespace ccl {
@@ -111,7 +112,7 @@ void set_kernel_args(ze_kernel_handle_t kernel, const ze_kernel_args_t& kernel_a
     for (const auto& arg : kernel_args) {
         auto res = zeKernelSetArgumentValue(kernel, idx, arg.first, arg.second);
         if (res != ZE_RESULT_SUCCESS) {
-            CCL_THROW("zeKernelSetArgumentValue falied with error ",
+            CCL_THROW("zeKernelSetArgumentValue failed with error ",
                       to_string(res),
                       " on idx ",
                       idx,
@@ -140,12 +141,18 @@ void get_comp_queue_ordinal(ze_device_handle_t device,
                             uint32_t* ordinal) {
     uint32_t comp_ordinal = std::numeric_limits<uint32_t>::max();
 
-    for (uint32_t i = 0; i < props.size(); ++i) {
-        if (props[i].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE) {
-            comp_ordinal = i;
+    for (uint32_t idx = 0; idx < props.size(); ++idx) {
+        if (props[idx].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE) {
+            comp_ordinal = idx;
             break;
         }
     }
+
+    LOG_DEBUG("find queue: { ordinal: ",
+              comp_ordinal,
+              ", queue properties params: ",
+              to_string(props[comp_ordinal]),
+              " }");
 
     if (comp_ordinal != std::numeric_limits<uint32_t>::max()) {
         *ordinal = comp_ordinal;
@@ -156,12 +163,61 @@ void get_comp_queue_ordinal(ze_device_handle_t device,
     }
 }
 
+void get_copy_queue_ordinal(ze_device_handle_t device,
+                            const ze_queue_properties_t& props,
+                            uint32_t* ordinal) {
+    uint32_t copy_ordinal = std::numeric_limits<uint32_t>::max();
+
+    for (uint32_t idx = 0; idx < props.size(); ++idx) {
+        /* only compute property */
+        if ((props[idx].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE) &&
+            global_data::env().ze_copy_engine == ccl_ze_copy_engine_none) {
+            copy_ordinal = idx;
+            break;
+        }
+
+        /* only copy property */
+        if ((props[idx].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COPY) &&
+            ((props[idx].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE) == 0)) {
+            /* main */
+            if (props[idx].numQueues == 1 &&
+                global_data::env().ze_copy_engine == ccl_ze_copy_engine_main) {
+                copy_ordinal = idx;
+                break;
+            }
+            /* link */
+            if (props[idx].numQueues > 1 &&
+                global_data::env().ze_copy_engine == ccl_ze_copy_engine_link) {
+                copy_ordinal = idx;
+                break;
+            }
+        }
+    }
+
+    LOG_DEBUG("find copy queue: { ordinal: ",
+              copy_ordinal,
+              ", queue properties params: ",
+              to_string(props[copy_ordinal]),
+              " }");
+
+    if (copy_ordinal != std::numeric_limits<uint32_t>::max()) {
+        *ordinal = copy_ordinal;
+    }
+    else {
+        LOG_WARN("could not find queue ordinal for copy engine mode: ",
+                 global_data::env().ze_copy_engine,
+                 ", ordinal 0 will be used");
+        *ordinal = 0;
+    }
+}
+
 void get_queue_index(const ze_queue_properties_t& props,
                      uint32_t ordinal,
-                     int rank,
+                     int idx,
                      uint32_t* index) {
     CCL_ASSERT(props.size() > ordinal, "props.size() <= ordinal");
-    *index = rank % props[ordinal].numQueues;
+    *index = idx % props[ordinal].numQueues;
+    LOG_DEBUG("set queue index: ", *index);
 }
 
 std::string to_string(const ze_result_t result) {
@@ -246,6 +302,59 @@ std::string to_string(const ze_kernel_args_t& kernel_args) {
     }
     ss << "}";
     return ss.str();
+}
+
+std::string to_string(const ze_command_queue_group_property_flag_t& flag) {
+    switch (flag) {
+        case ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE:
+            return "ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE";
+        case ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COPY:
+            return "ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COPY";
+        case ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COOPERATIVE_KERNELS:
+            return "ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COOPERATIVE_KERNELS";
+        case ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_METRICS:
+            return "ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_METRICS";
+        case ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_FORCE_UINT32:
+            return "ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_FORCE_UINT32";
+        default:
+            return "unknown ze_command_queue_group_property_flag_t value: " +
+                   std::to_string(static_cast<int>(flag));
+    }
+}
+
+std::string to_string(const ze_command_queue_group_properties_t& queue_property) {
+    std::stringstream ss;
+    ss << "stype: " << queue_property.stype << ", pNext: " << (void*)queue_property.pNext
+       << ", flags: "
+       << flags_to_string<ze_command_queue_group_property_flag_t>(queue_property.flags)
+       << ", maxMemoryFillPatternSize: " << queue_property.maxMemoryFillPatternSize
+       << ", numQueues: " << queue_property.numQueues;
+    return ss.str();
+}
+
+std::string join_strings(const std::vector<std::string>& tokens, const std::string& delimeter) {
+    std::stringstream ss;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        ss << tokens[i];
+        if (i < tokens.size() - 1) {
+            ss << delimeter;
+        }
+    }
+    return ss.str();
+}
+
+template <typename T>
+std::string flags_to_string(uint32_t flags) {
+    const size_t bits = 8;
+    std::vector<std::string> output;
+    for (size_t i = 0; i < sizeof(flags) * bits; ++i) {
+        const size_t mask = 1UL << i;
+        const auto flag = flags & mask;
+        if (flag != 0) {
+            output.emplace_back(to_string(static_cast<T>(flag)));
+        }
+    }
+    return join_strings(output, " | ");
 }
 
 } // namespace ze

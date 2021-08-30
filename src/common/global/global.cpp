@@ -23,6 +23,7 @@
 #include "exec/exec.hpp"
 #include "fusion/fusion.hpp"
 #include "parallelizer/parallelizer.hpp"
+#include "sched/buffer_cache.hpp"
 #include "sched/cache/cache.hpp"
 
 #ifdef MULTI_GPU_SUPPORT
@@ -39,8 +40,6 @@ global_data::global_data() {
        to ensure static objects construction/destruction rule */
     LOG_INFO("create global_data object");
 
-    //TODO new_api configure thread wait timeout
-    thread_barrier_wait_timeout_sec = 5;
     kernel_counter = 0;
 }
 
@@ -91,6 +90,8 @@ void global_data::init_resize_dependent_objects() {
     dtypes = std::unique_ptr<ccl_datatype_storage>(new ccl_datatype_storage());
 
     sched_cache = std::unique_ptr<ccl_sched_cache>(new ccl_sched_cache());
+    buffer_cache =
+        std::unique_ptr<ccl::buffer_cache>(new ccl::buffer_cache(env_object.worker_count));
 
     if (env_object.enable_fusion) {
         /* create fusion_manager before executor because service_worker uses fusion_manager */
@@ -117,6 +118,7 @@ void global_data::reset_resize_dependent_objects() {
     comm_ids.reset();
     fusion_manager.reset();
     sched_cache.reset();
+    buffer_cache.reset();
     dtypes.reset();
 }
 

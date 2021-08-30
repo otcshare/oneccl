@@ -72,8 +72,9 @@ host_communicator::host_communicator(int size, int rank, shared_ptr_class<ikvs_w
     ccl::global_data& data = ccl::global_data::get();
     std::shared_ptr<atl_wrapper> atl_tmp =
         std::shared_ptr<atl_wrapper>(new atl_wrapper(size, { rank }, kvs));
-    comm_impl =
-        std::shared_ptr<ccl_comm>(new ccl_comm(rank, size, data.comm_ids->acquire(), atl_tmp));
+    comm_impl = std::shared_ptr<ccl_comm>(
+        new ccl_comm(rank, size, data.comm_ids->acquire(), atl_tmp, false, this));
+    create_sub_comms(atl_tmp);
 }
 
 host_communicator::host_communicator(ccl::unified_device_type&& d,
@@ -100,17 +101,23 @@ host_communicator::host_communicator(std::shared_ptr<atl_wrapper> atl)
     LOG_DEBUG("ctor");
 
     ccl::global_data& data = ccl::global_data::get();
-    comm_impl = std::shared_ptr<ccl_comm>(new ccl_comm(rank, size, data.comm_ids->acquire(), atl));
+    comm_impl = std::shared_ptr<ccl_comm>(
+        new ccl_comm(rank, size, data.comm_ids->acquire(), atl, false, this));
+    create_sub_comms(atl);
 }
 
-host_communicator::host_communicator(std::shared_ptr<ccl_comm> impl)
+host_communicator::host_communicator(std::shared_ptr<ccl_comm> impl, bool is_sub_communicator)
         : comm_impl(impl),
           device(ccl::device_index_type(ccl::unused_index_value,
                                         ccl::unused_index_value,
                                         ccl::unused_index_value)),
           comm_attr(create_comm_split_attr()),
           comm_rank(impl->rank()),
-          comm_size(impl->size()) {}
+          comm_size(impl->size()) {
+    if (!is_sub_communicator) {
+        create_sub_comms(comm_impl.get()->atl);
+    }
+}
 
 int host_communicator::rank() const {
     return comm_rank;
@@ -152,6 +159,39 @@ void host_communicator::exchange_colors(std::vector<int>& colors) {
 
     this->allgatherv_impl(colors.data(), send_count, colors.data(), recv_counts, {}, attr, {})
         .wait();
+}
+
+void host_communicator::create_sub_comms(std::shared_ptr<atl_wrapper> atl) {
+    bool is_sub_comm = true;
+    if (ccl::global_data::env().atl_transport == ccl_atl_mpi) {
+        r2r_comm =
+            std::shared_ptr<host_communicator>(new host_communicator(comm_impl, is_sub_comm));
+        node_comm =
+            std::shared_ptr<host_communicator>(new host_communicator(comm_impl, is_sub_comm));
+        pair_comm =
+            std::shared_ptr<host_communicator>(new host_communicator(comm_impl, is_sub_comm));
+        even_comm =
+            std::shared_ptr<host_communicator>(new host_communicator(comm_impl, is_sub_comm));
+    }
+    else {
+        ccl::global_data& data = ccl::global_data::get();
+        r2r_comm = std::shared_ptr<host_communicator>(
+            new host_communicator(std::shared_ptr<ccl_comm>(this->create_with_color(
+                                      atl->get_r2r_color(), data.comm_ids.get(), comm_impl.get())),
+                                  is_sub_comm));
+        node_comm = std::shared_ptr<host_communicator>(
+            new host_communicator(std::shared_ptr<ccl_comm>(this->create_with_color(
+                                      atl->get_host_color(), data.comm_ids.get(), comm_impl.get())),
+                                  is_sub_comm));
+        even_comm = std::shared_ptr<host_communicator>(new host_communicator(
+            std::shared_ptr<ccl_comm>(this->create_with_color(
+                atl->get_host_color() + atl->get_rank() % 2, data.comm_ids.get(), comm_impl.get())),
+            is_sub_comm));
+        pair_comm = std::shared_ptr<host_communicator>(new host_communicator(
+            std::shared_ptr<ccl_comm>(this->create_with_color(
+                atl->get_host_color() + atl->get_rank() / 2, data.comm_ids.get(), comm_impl.get())),
+            is_sub_comm));
+    }
 }
 
 ccl_comm* host_communicator::create_with_color(int color,
@@ -424,6 +464,26 @@ ccl::event host_communicator::sparse_allreduce_impl(const void* send_ind_buf,
 
 std::shared_ptr<atl_wrapper> host_communicator::get_atl() {
     return comm_impl->atl;
+}
+
+std::shared_ptr<host_communicator> host_communicator::get_r2r_comm() {
+    return r2r_comm;
+}
+
+std::shared_ptr<host_communicator> host_communicator::get_node_comm() {
+    return node_comm;
+}
+
+std::shared_ptr<host_communicator> host_communicator::get_pair_comm() {
+    return pair_comm;
+}
+
+std::shared_ptr<host_communicator> host_communicator::get_even_comm() {
+    return even_comm;
+}
+
+std::shared_ptr<ccl_comm> host_communicator::get_ccl_comm() {
+    return comm_impl;
 }
 
 std::string host_communicator::to_string() const {

@@ -48,7 +48,7 @@ typedef enum { ATL_MPI_LIB_IMPI, ATL_MPI_LIB_MPICH, ATL_MPI_LIB_NONE } atl_mpi_l
 
 typedef struct {
     atl_mpi_lib_type_t type;
-    int device_buf;
+    int hmem;
 } atl_mpi_lib_attr_t;
 
 typedef struct {
@@ -64,8 +64,8 @@ typedef struct {
     /* minimal expected version of library, mandatory */
     int min_version_value;
 
-    /* minimal expected version of library with device_buf support, mandatory */
-    int min_device_buf_version_value;
+    /* minimal expected version of library with hmem support, mandatory */
+    int min_hmem_version_value;
 
     /* string prefix before library kind, optional */
     const char* kind_prefix;
@@ -134,7 +134,7 @@ typedef struct atl_mpi_global_data {
               mnic_type(ATL_MNIC_NONE),
               mnic_count(1) {
         mpi_lib_attr.type = ATL_MPI_LIB_NONE;
-        mpi_lib_attr.device_buf = 0;
+        mpi_lib_attr.hmem = 0;
 
         bf16.dtype = MPI_DATATYPE_NULL;
         bf16.sum_op = MPI_OP_NULL;
@@ -685,8 +685,7 @@ atl_mpi_lib_attr_t atl_mpi_get_lib_attr() {
                       ")");
 
             lib_attr.type = final_info->type;
-            lib_attr.device_buf =
-                (final_info->min_device_buf_version_value >= version_value) ? 1 : 0;
+            lib_attr.hmem = (final_info->min_hmem_version_value >= version_value) ? 1 : 0;
 
             break;
         }
@@ -742,11 +741,12 @@ atl_status_t atl_mpi_set_impi_env(const atl_attr_t& attr, const atl_mpi_lib_attr
 
 #ifdef CCL_ENABLE_SYCL
     setenv("I_MPI_SHM_CMA", "0", 0);
-    if (attr.in.enable_device_buf && lib_attr.device_buf) {
+    if (attr.in.enable_hmem && lib_attr.hmem) {
         setenv("I_MPI_OFFLOAD", "2", 0);
         setenv("I_MPI_OFFLOAD_TOPOLIB", "l0", 0);
         setenv("I_MPI_OFFLOAD_QUEUE_CACHE", "1", 0);
         setenv("I_MPI_OFFLOAD_LIST_CACHE", "1", 0);
+        setenv("I_MPI_OFFLOAD_MEMCPY_KIND", "cached", 0);
         if (attr.in.ep_count > 1) {
             /* try to set global lock level before vci level
                because setenv is invoked with overwrite=0 */
@@ -1442,41 +1442,6 @@ static atl_status_t atl_mpi_ep_check(atl_ep_t* ep, int* is_completed, atl_req_t*
     return status;
 }
 
-static atl_ops_t atl_mpi_ops = {
-    .finalize = atl_mpi_finalize,
-};
-
-static atl_mr_ops_t atl_mpi_mr_ops = {
-    .mr_reg = atl_mpi_mr_reg,
-    .mr_dereg = atl_mpi_mr_dereg,
-};
-
-static atl_p2p_ops_t atl_mpi_ep_p2p_ops = {
-    .send = atl_mpi_ep_send,
-    .recv = atl_mpi_ep_recv,
-    .probe = atl_mpi_ep_probe,
-};
-
-static atl_coll_ops_t atl_mpi_ep_coll_ops = { .allgatherv = atl_mpi_ep_allgatherv,
-                                              .allreduce = atl_mpi_ep_allreduce,
-                                              .alltoall = atl_mpi_ep_alltoall,
-                                              .alltoallv = atl_mpi_ep_alltoallv,
-                                              .barrier = atl_mpi_ep_barrier,
-                                              .bcast = atl_mpi_ep_bcast,
-                                              .reduce = atl_mpi_ep_reduce,
-                                              .reduce_scatter = atl_mpi_ep_reduce_scatter };
-
-static atl_rma_ops_t atl_mpi_ep_rma_ops = {
-    .read = atl_mpi_ep_read,
-    .write = atl_mpi_ep_write,
-};
-
-static atl_comp_ops_t atl_mpi_ep_comp_ops = { .wait = atl_mpi_ep_wait,
-                                              .wait_all = atl_mpi_ep_wait_all,
-                                              .cancel = NULL,
-                                              .poll = atl_mpi_ep_poll,
-                                              .check = atl_mpi_ep_check };
-
 static atl_status_t atl_mpi_ep_init(atl_mpi_ctx_t* mpi_ctx, size_t idx, atl_ep_t** ep) {
     int ret;
 
@@ -1537,10 +1502,6 @@ static atl_status_t atl_mpi_ep_init(atl_mpi_ctx_t* mpi_ctx, size_t idx, atl_ep_t
     *ep = &mpi_ep->ep;
     (*ep)->idx = idx;
     (*ep)->ctx = &mpi_ctx->ctx;
-    (*ep)->p2p_ops = &atl_mpi_ep_p2p_ops;
-    (*ep)->coll_ops = &atl_mpi_ep_coll_ops;
-    (*ep)->rma_ops = &atl_mpi_ep_rma_ops;
-    (*ep)->comp_ops = &atl_mpi_ep_comp_ops;
 
     return ATL_STATUS_SUCCESS;
 
@@ -1568,6 +1529,8 @@ static atl_status_t atl_mpi_init(int* argc,
     int is_tag_ub_set = 0;
     void* tag_ub_ptr = NULL;
     int required_thread_level = MPI_THREAD_MULTIPLE, provided_thread_level;
+
+    char my_hostname[ATL_MAX_HOSTNAME_LEN] = { 0 };
 
     atl_mpi_ctx_t* mpi_ctx = (atl_mpi_ctx_t*)calloc(1, sizeof(atl_mpi_ctx_t));
     if (!mpi_ctx)
@@ -1656,8 +1619,9 @@ static atl_status_t atl_mpi_init(int* argc,
     MPI_Comm_size(local_comm, (int*)&(coord->local_count));
     MPI_Comm_free(&local_comm);
 
-    ctx->ops = &atl_mpi_ops;
-    ctx->mr_ops = &atl_mpi_mr_ops;
+    gethostname(my_hostname, ATL_MAX_HOSTNAME_LEN - 1);
+    coord->hostname_hash = std::hash<std::string>{}(my_hostname);
+
     ctx->ep_count = attr->in.ep_count;
     ctx->eps = (atl_ep_t**)calloc(1, sizeof(void*) * attr->in.ep_count);
     if (!ctx->eps)
@@ -1678,7 +1642,7 @@ static atl_status_t atl_mpi_init(int* argc,
             LOG_INFO("atl-mpi-global:")
             LOG_INFO("  is_external_init: ", global_data.is_external_init);
             LOG_INFO("  mpi_lib_attr.type: ", mpi_lib_infos[global_data.mpi_lib_attr.type].name);
-            LOG_INFO("  mpi_lib_attr.device_buf: ", global_data.mpi_lib_attr.device_buf);
+            LOG_INFO("  mpi_lib_attr.hmem: ", global_data.mpi_lib_attr.hmem);
             LOG_INFO("  extra_ep: ", global_data.extra_ep);
             LOG_INFO("  mnic_type: ", global_data.mnic_type);
             if (global_data.mnic_type != ATL_MNIC_NONE)
@@ -1702,7 +1666,7 @@ static atl_status_t atl_mpi_init(int* argc,
     /* report actual attributes back to upper level */
     attr->out.enable_shm = 0;
     attr->out.enable_rma = 0;
-    attr->out.enable_device_buf = attr->in.enable_device_buf & global_data.mpi_lib_attr.device_buf;
+    attr->out.enable_hmem = attr->in.enable_hmem & global_data.mpi_lib_attr.hmem;
     attr->out.mnic_type = global_data.mnic_type;
     attr->out.mnic_count = global_data.mnic_count;
     attr->out.tag_bits = 32;

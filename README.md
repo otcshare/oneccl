@@ -1,4 +1,4 @@
-# oneAPI Collective Communications Library (oneCCL) <!-- omit in toc -->
+# oneAPI Collective Communications Library (oneCCL) <!-- omit in toc --> <img align="right" width="100" height="100" src="https://spec.oneapi.io/oneapi-logo-white-scaled.jpg">
 
 [Installation](#installation)&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;[Usage](#usage)&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;[Release Notes](https://software.intel.com/content/www/us/en/develop/articles/oneapi-collective-communication-library-ccl-release-notes.html)&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;[Documentation](https://oneapi-src.github.io/oneCCL/)&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;[How to Contribute](CONTRIBUTING.md)&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;[License](LICENSE)
 
@@ -7,6 +7,8 @@ oneAPI Collective Communications Library (oneCCL) provides an efficient implemen
 oneCCL is integrated into:
 * [Horovod\*](https://github.com/horovod/horovod) (distributed training framework). Refer to [Horovod with oneCCL](https://github.com/horovod/horovod/blob/master/docs/oneccl.rst) for details.
 * [PyTorch\*](https://github.com/pytorch/pytorch) (machine learning framework). Refer to [PyTorch bindings for oneCCL](https://github.com/intel/torch-ccl) for details.
+
+oneCCL is part of [oneAPI](https://oneapi.io).
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -47,7 +49,7 @@ cmake ..
 make -j install
 ```
 
-If you need a clean build, create a new build directory and invoke `cmake` within it. Refer to FAQ to learn [when you might need a clean build](#when-do-i-need-a-clean-build-when-should-i-remove-my-favorite-build-directory).
+If you need a clean build, create a new build directory and invoke `cmake` within it.
 
 You can also do the following during installation:
 - [Specify installation directory](INSTALL.md#specify-installation-directory)
@@ -55,7 +57,6 @@ You can also do the following during installation:
 - [Specify `SYCL` cross-platform abstraction level](INSTALL.md#specify-sycl-cross-platform-abstraction-level)
 - [Specify the build type](INSTALL.md#specify-the-build-type)
 - [Enable `make` verbose output](INSTALL.md#enable-make-verbose-output)
-- [Build with address sanitizer](INSTALL.md#build-with-address-sanitizer)
 
 ## Usage
 
@@ -136,16 +137,6 @@ cmake [-DOUTPUT_DIR=<output_dir>] -P cmake/script/config_generation.cmake
 ### Workshop Materials
 
 - oneAPI, oneCCL and OFI: Path to Heterogeneous Architecure Programming with Scalable Collective Communications: [recording](https://www.youtube.com/watch?v=ksiZ90EtP98&feature=youtu.be) and [slides](https://www.openfabrics.org/wp-content/uploads/2020-workshop-presentations/502.-OFA-Virtual-Workshop-2020-oneCCL-v5.pdf)
-
-## FAQ <!-- omit in toc -->
-
-### When do I need a clean build? When should I remove my favorite build directory? <!-- omit in toc -->
-
-In most cases, there is no need to remove the current build directory. You can just run `make` to
-compile and link changed files. 
-
-However, if you see some suspicious build errors after a significant
-change in code (for example, after rebase or a change of branch), it is a hint for you to clean the build directory.
 
 ## Contribute <!-- omit in toc -->
 

@@ -27,7 +27,6 @@ endif(CCL_ENABLE_SYCL)
 
 if (MULTI_GPU_SUPPORT)
 list (APPEND EXTENSIONS_SRC
-                    ccl_gpu_modules.cpp
                     ccl_cpp_utils.cpp
 
                     native_device_api/l0/base.cpp
@@ -42,8 +41,6 @@ list (APPEND EXTENSIONS_SRC
                     native_device_api/l0/primitives.cpp
                     native_device_api/interop_utils.cpp
 
-                    common/event/impls/gpu_event.cpp
-
                     common/comm/l0/comm_context.cpp
                     common/comm/l0/comm_context_storage.cpp
                     common/comm/l0/context_comm_addr.cpp
@@ -57,13 +54,6 @@ list (APPEND EXTENSIONS_SRC
                     common/comm/l0/devices/communication_structs/ipc_connection.cpp
                     common/comm/l0/devices/communication_structs/ipc_server.cpp
                     common/comm/l0/devices/communication_structs/ipc_client.cpp
-
-                    common/comm/l0/communicator/device_group/device_ring_communicator.cpp
-                    common/comm/l0/communicator/device_group/device_a2a_communicator.cpp
-                    common/comm/l0/communicator/thread_group/thread_ring_communicator.cpp
-                    common/comm/l0/communicator/thread_group/thread_a2a_communicator.cpp
-                    common/comm/l0/communicator/process_group/process_ring_communicator.cpp
-                    common/comm/l0/communicator/process_group/process_a2a_communicator.cpp
 
                     common/comm/l0/context/process_group_ctx.cpp
                     common/comm/l0/context/thread_group_ctx.cpp
@@ -99,9 +89,11 @@ if (CCL_ENABLE_SYCL AND MULTI_GPU_SUPPORT)
     list (APPEND EXTENSIONS_SRC
                     sched/entry/gpu/ze_base_entry.cpp
                     sched/entry/gpu/ze_allreduce_entry.cpp
+                    sched/entry/gpu/ze_copy_entry.cpp
                     sched/entry/gpu/ze_handle_exchange_entry.cpp
                     sched/entry/gpu/ze_event_signal_entry.cpp
                     sched/entry/gpu/ze_event_wait_entry.cpp
+                    sched/entry/gpu/ze_reduce_entry.cpp
                     sched/entry/reduce_local_entry.cpp
                     sched/ze_handle_manager.cpp
         )
@@ -135,6 +127,7 @@ set(CCL_SRC
     atl/atl_wrapper.cpp
     atl/mpi/atl_mpi.cpp
     atl/ofi/atl_ofi.cpp
+    atl/ofi/atl_ofi_helper.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable_simple.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable_simple_internal.cpp
@@ -176,6 +169,7 @@ set(CCL_SRC
     coll/algorithms/reduce_scatter.cpp
     coll/coll.cpp
     coll/coll_check.cpp
+    coll/selection/selection.cpp
     coll/selection/selector_allgatherv.cpp
     coll/selection/selector_allreduce.cpp
     coll/selection/selector_alltoall.cpp
@@ -192,6 +186,7 @@ set(CCL_SRC
     comp/fp16/fp16_intrisics.cpp
     hwloc/hwloc_wrapper.cpp
     sched/sched.cpp
+    sched/buffer_cache.cpp
     sched/extra_sched.cpp
     sched/master_sched.cpp
     sched/sched_base.cpp
@@ -203,6 +198,7 @@ set(CCL_SRC
     sched/queue/queue.cpp
     sched/entry/coll/coll_entry.cpp
     sched/entry/coll/coll_entry_helper.cpp
+    sched/entry/copy/copy_entry.cpp
     sched/entry/copy/copy_helper.cpp
     sched/entry/entry.cpp
     sched/entry/factory/chunked_entry_factory.cpp

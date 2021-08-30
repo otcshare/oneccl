@@ -53,9 +53,11 @@ constexpr const char* I_MPI_AVAILABLE_CORES_DELIMS = ",x";
 constexpr const char* CCL_ATL_TRANSPORT = "CCL_ATL_TRANSPORT";
 constexpr const char* CCL_ATL_SHM = "CCL_ATL_SHM";
 constexpr const char* CCL_ATL_RMA = "CCL_ATL_RMA";
-constexpr const char* CCL_ATL_DEVICE_BUF = "CCL_ATL_DEVICE_BUF";
+constexpr const char* CCL_ATL_HMEM = "CCL_ATL_HMEM";
+constexpr const char* CCL_ATL_SEND_PROXY = "CCL_ATL_SEND_PROXY";
 constexpr const char* CCL_ATL_SYNC_COLL = "CCL_ATL_SYNC_COLL";
 constexpr const char* CCL_ATL_EXTRA_EP = "CCL_ATL_EXTRA_EP";
+constexpr const char* CCL_ATL_CACHE = "CCL_ATL_CACHE";
 
 constexpr const char* CCL_MNIC = "CCL_MNIC";
 constexpr const char* CCL_MNIC_NAME = "CCL_MNIC_NAME";
@@ -85,6 +87,7 @@ constexpr const char* CCL_MAX_SHORT_SIZE = "CCL_MAX_SHORT_SIZE";
 constexpr const char* CCL_BCAST_PART_COUNT = "CCL_BCAST_PART_COUNT";
 constexpr const char* CCL_CACHE_KEY = "CCL_CACHE_KEY";
 constexpr const char* CCL_CACHE_FLUSH = "CCL_CACHE_FLUSH";
+constexpr const char* CCL_BUFFER_CACHE = "CCL_BUFFER_CACHE";
 constexpr const char* CCL_STRICT_ORDER = "CCL_STRICT_ORDER";
 constexpr const char* CCL_STAGING_BUFFER = "CCL_STAGING_BUFFER";
 constexpr const char* CCL_OP_SYNC = "CCL_OP_SYNC";
@@ -114,6 +117,7 @@ constexpr const char* CCL_KERNEL_1S_USE_COPY_OPS = "CCL_KERNEL_1S_USE_COPY_OPS";
 constexpr const char* CCL_KERNEL_1S_IPC_WA = "CCL_KERNEL_1S_IPC_WA";
 constexpr const char* CCL_KERNEL_OUTPUT_EVENT = "CCL_KERNEL_OUTPUT_EVENT";
 constexpr const char* CCL_ZE_SERIALIZE = "CCL_ZE_SERIALIZE";
+constexpr const char* CCL_ZE_COPY_ENGINE = "CCL_ZE_COPY_ENGINE";
 
 constexpr const char* CCL_BF16 = "CCL_BF16";
 constexpr const char* CCL_FP16 = "CCL_FP16";
@@ -122,7 +126,19 @@ enum ccl_priority_mode { ccl_priority_none, ccl_priority_direct, ccl_priority_li
 
 enum ccl_atl_transport { ccl_atl_ofi, ccl_atl_mpi };
 
+enum ccl_atl_send_proxy {
+    ccl_atl_send_proxy_none,
+    ccl_atl_send_proxy_regular,
+    ccl_atl_send_proxy_usm
+};
+
 enum ccl_staging_buffer { ccl_staging_regular, ccl_staging_usm };
+
+enum ccl_ze_copy_engine_mode {
+    ccl_ze_copy_engine_none,
+    ccl_ze_copy_engine_main,
+    ccl_ze_copy_engine_link
+};
 
 namespace ccl {
 
@@ -160,7 +176,9 @@ public:
     ccl_atl_transport atl_transport;
     int enable_shm;
     int enable_rma;
-    int enable_device_buf;
+    int enable_hmem;
+    ccl_atl_send_proxy atl_send_proxy;
+    int enable_atl_cache;
     int enable_sync_coll;
     int enable_extra_ep;
 
@@ -197,6 +215,7 @@ public:
     ssize_t bcast_part_count;
     ccl_cache_key_type cache_key_type;
     int enable_cache_flush;
+    int enable_buffer_cache;
     int enable_strict_order;
     ccl_staging_buffer staging_buffer;
     int enable_op_sync;
@@ -214,7 +233,6 @@ public:
     ssize_t alltoall_scatter_max_ops;
     int alltoall_scatter_plain;
 
-    int enable_comm_kernels;
     std::string kernel_path;
     int kernel_debug;
     int enable_kernel_cache;
@@ -226,6 +244,7 @@ public:
     int enable_kernel_1s_ipc_wa;
     int enable_kernel_output_event;
     int ze_serialize_mode;
+    ccl_ze_copy_engine_mode ze_copy_engine;
 
     ccl_bf16_impl_type bf16_impl_type;
     ccl_fp16_impl_type fp16_impl_type;
@@ -299,7 +318,9 @@ public:
 
     static std::map<ccl_priority_mode, std::string> priority_mode_names;
     static std::map<ccl_atl_transport, std::string> atl_transport_names;
+    static std::map<ccl_atl_send_proxy, std::string> atl_send_proxy_names;
     static std::map<ccl_staging_buffer, std::string> staging_buffer_names;
+    static std::map<ccl_ze_copy_engine_mode, std::string> ze_copy_engine_names;
     static std::map<atl_mnic_t, std::string> mnic_type_names;
 
     int env_2_worker_affinity(int local_proc_idx, int local_proc_count);

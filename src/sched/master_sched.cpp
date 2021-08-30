@@ -13,6 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#include "coll/coll_check.hpp"
 #include "common/global/global.hpp"
 #include "common/utils/sync_object.hpp"
 #include "common/utils/sycl_utils.hpp"
@@ -24,10 +25,15 @@
 #include "sched/master_sched.hpp"
 #include "sched/queue/queue.hpp"
 
+#ifdef CCL_ENABLE_SYCL
+#include <CL/sycl.hpp>
+#include <CL/sycl/backend/level_zero.hpp>
+
 #ifdef MULTI_GPU_SUPPORT
 #include "sched/entry/gpu/ze_cache.hpp"
 #include "sched/entry/gpu/ze_primitives.hpp"
-#endif
+#endif // MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_SYCL
 
 #ifdef CCL_ENABLE_SYCL
 constexpr ze_event_pool_desc_t get_event_pool_desc() {
@@ -58,7 +64,7 @@ ccl_master_sched::ccl_master_sched(const ccl_coll_param& coll_param)
 
         auto pool_desc = get_event_pool_desc();
 
-        ccl::global_data::get().ze_cache->get(0, l0_context, &pool_desc, &get_memory().sync_pool);
+        ccl::global_data::get().ze_cache->get(0, l0_context, pool_desc, &get_memory().sync_pool);
 
         ze_event_desc_t event_desc = ccl::ze::default_event_desc;
         event_desc.signal = ZE_EVENT_SCOPE_FLAG_HOST;
@@ -99,7 +105,7 @@ ccl_master_sched::~ccl_master_sched() {
 
         auto pool_desc = get_event_pool_desc();
 
-        ccl::global_data::get().ze_cache->push(0, l0_context, &pool_desc, &get_memory().sync_pool);
+        ccl::global_data::get().ze_cache->push(0, l0_context, pool_desc, get_memory().sync_pool);
     }
     else {
         LOG_DEBUG("skip sync event destruction");

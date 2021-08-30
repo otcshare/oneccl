@@ -20,13 +20,13 @@
 
 #if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
 #include "sched/entry/gpu/ze_base_entry.hpp"
-#endif // defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
 
 #if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
 class reduce_local_entry : public ze_base_entry {
 #else
 class reduce_local_entry : public sched_entry {
-#endif // defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
 public:
     static constexpr const char* class_name() noexcept {
         return "REDUCE_LOCAL";
@@ -43,9 +43,9 @@ public:
             :
 #if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
               ze_base_entry(sched),
-#else
+#else // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
               sched_entry(sched),
-#endif // defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
               in_buf(in_buf),
               in_cnt(in_cnt),
               inout_buf(inout_buf),
@@ -53,8 +53,7 @@ public:
               dtype(dtype),
               op(reduction_op),
               fn(sched->coll_attr.reduction_fn),
-              use_device(false),
-              is_initialized(false) {
+              use_device(false) {
         CCL_THROW_IF_NOT(op != ccl::reduction::custom || fn,
                          "custom reduction requires user provided callback");
     }
@@ -63,15 +62,15 @@ public:
     ~reduce_local_entry() override {
         finalize();
     }
-    void init() override;
-    void finalize() override;
+    void init();
+    void finalize();
     void update() override;
     void check_use_device();
     void start_on_device();
-#else
+#else // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
     void check_use_device() {}
     void start_on_device() {}
-#endif // defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
     void start_on_host() {
         size_t bytes = in_cnt * dtype.size();
         size_t offset = inout_buf.get_offset();
@@ -138,12 +137,11 @@ private:
     void* inout_buf_ptr;
 
     bool use_device;
-    bool is_initialized;
 
 #if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
     ze_module_handle_t module;
     ze_kernel_handle_t kernel;
     std::string kernel_name;
     ze_group_count_t group_count;
-#endif // defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
 };

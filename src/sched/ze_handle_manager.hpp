@@ -20,6 +20,7 @@
 #include "common/utils/buffer.hpp"
 #include "sched/entry/gpu/ze_primitives.hpp"
 
+#include <unordered_map>
 #include <ze_api.h>
 
 class ccl_comm;
@@ -56,7 +57,7 @@ public:
     void clear();
 
     void set(const mem_handle_map_t& handles_arg);
-    void get(int rank, size_t buf_idx, ccl_buffer& buf);
+    void get(int rank, size_t buf_idx, ccl_buffer& buf, ccl_comm* map_comm = nullptr);
 
     void get_handle(const void* buffer, ze_ipc_mem_handle_t* handle);
     void get_handle(ze_event_pool_handle_t pool, ze_ipc_event_pool_handle_t* handle);
@@ -69,9 +70,10 @@ private:
     ze_context_handle_t context{};
     ze_device_handle_t device{};
     ccl_comm* comm{};
+    std::unordered_map<int, int> rank_map{};
     mem_handle_map_t handles;
 
-    size_t get_ptr_diff(const void* ptr1, const void* ptr2) noexcept;
+    void check_rank(int rank, ccl_comm* check_comm);
 };
 
 } // namespace ze

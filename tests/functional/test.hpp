@@ -129,6 +129,7 @@ public:
     }
 
     base_test();
+    virtual ~base_test() = default;
 
     void alloc_buffers_base(test_operation<T>& op);
     virtual void alloc_buffers(test_operation<T>& op);

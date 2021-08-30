@@ -252,6 +252,7 @@ ccl::status ccl_coll_build_gpu_bcast(ccl_sched* sched,
     ccl_coll_entry_param barrier_param{};
     barrier_param.ctype = ccl_coll_barrier;
     barrier_param.comm = comm;
+    barrier_param.hint_algo.barrier = ccl_coll_barrier_ring;
 
     if (sched->coll_attr.to_cache) {
         sched->set_entry_exec_mode(ccl_sched_entry_exec_once);
@@ -269,7 +270,7 @@ ccl::status ccl_coll_build_gpu_bcast(ccl_sched* sched,
 
     if (comm->rank() != root) {
         entry_factory::make_entry<copy_entry>(
-            sched, ccl_buffer(), buf, count, dtype, copy_attr(root, copy_direction::d2d, 0));
+            sched, ccl_buffer(), buf, count, dtype, copy_attr(root, 0, copy_direction::d2d));
         sched->add_barrier();
     }
 

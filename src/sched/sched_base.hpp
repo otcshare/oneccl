@@ -49,6 +49,13 @@ enum ccl_sched_add_mode {
     ccl_sched_add_mode_last_value
 };
 
+enum ccl_sched_buf_type {
+    ccl_sched_buf_system,
+    ccl_sched_buf_runtime,
+
+    ccl_sched_buf_last_value
+};
+
 std::string to_string(ccl_sched_add_mode mode);
 
 struct ccl_sched_buffer_handler {
@@ -102,7 +109,12 @@ struct ccl_sched_base {
 
     size_t get_priority() const;
 
-    ccl_buffer alloc_buffer(size_t bytes);
+    void* alloc_buffer_unmanaged(size_t bytes, ccl_sched_buf_type buf_type = ccl_sched_buf_system);
+    void free_buffer_unmanaged(void* ptr,
+                               size_t bytes,
+                               ccl_sched_buf_type buf_type = ccl_sched_buf_system);
+
+    ccl_buffer alloc_buffer(size_t bytes, ccl_sched_buf_type buf_type = ccl_sched_buf_system);
 
 #ifdef CCL_ENABLE_SYCL
     ccl_buffer alloc_staging_buffer(size_t bytes);
@@ -141,6 +153,9 @@ struct ccl_sched_base {
     ccl_coll_param coll_param{};
     ccl_coll_attr coll_attr{};
 
+    /* TODO: schedule doesn't necessarily map on single algo */
+    ccl_coll_algo hint_algo{};
+
     /* sequence number of the schedule in the communicator */
     ccl_sched_id_t sched_id = 0;
 
@@ -158,13 +173,7 @@ protected:
         CCL_THROW("unsupported");
     }
 
-    ccl_sched_base(const ccl_coll_param& coll_param) : coll_param(coll_param) {
-#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
-        if (coll_param.stream != nullptr) {
-            memory.handle_manager.init(coll_param.comm, coll_param.stream);
-        }
-#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
-    }
+    ccl_sched_base(const ccl_coll_param& coll_param);
 
     void update_id();
 

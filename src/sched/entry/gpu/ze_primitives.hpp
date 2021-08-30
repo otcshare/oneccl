@@ -15,10 +15,8 @@
 */
 #pragma once
 
-#include "common/log/log.hpp"
 #include "sched/entry/gpu/ze_call.hpp"
 
-#include <fstream>
 #include <initializer_list>
 #include <string>
 #include <vector>
@@ -28,11 +26,16 @@ namespace ccl {
 
 namespace ze {
 
-#define ZE_CALL(ze_name, ze_args) \
-    do { \
-        ccl::ze::ze_call ze; \
-        ze.do_call(ze_name ze_args, #ze_name); \
-    } while (0);
+#define ZE_CALL(ze_name, ze_args) ccl::ze::ze_call().do_call(ze_name ze_args, #ze_name)
+
+enum class init_mode : int {
+    compute = 1,
+    copy = 2,
+};
+
+constexpr ze_context_desc_t default_context_desc = { .stype = ZE_STRUCTURE_TYPE_CONTEXT_DESC,
+                                                     .pNext = nullptr,
+                                                     .flags = 0 };
 
 constexpr ze_fence_desc_t default_fence_desc = { .stype = ZE_STRUCTURE_TYPE_FENCE_DESC,
                                                  .pNext = nullptr,
@@ -50,7 +53,7 @@ constexpr ze_command_list_desc_t default_cmd_list_desc = {
     .flags = 0,
 };
 
-constexpr ze_command_queue_desc_t default_comp_queue_desc = {
+constexpr ze_command_queue_desc_t default_cmd_queue_desc = {
     .stype = ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC,
     .pNext = nullptr,
     .ordinal = 0,
@@ -67,6 +70,16 @@ constexpr ze_device_mem_alloc_desc_t default_device_mem_alloc_desc = {
     .ordinal = 0
 };
 
+constexpr ze_memory_allocation_properties_t default_alloc_props = {
+    .stype = ZE_STRUCTURE_TYPE_MEMORY_ALLOCATION_PROPERTIES,
+    .pNext = nullptr,
+    .type = ZE_MEMORY_TYPE_UNKNOWN
+};
+
+constexpr ze_device_properties_t default_device_props = { .stype =
+                                                              ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES,
+                                                          .pNext = nullptr };
+
 constexpr ze_event_pool_desc_t default_event_pool_desc = { .stype =
                                                                ZE_STRUCTURE_TYPE_EVENT_POOL_DESC,
                                                            .pNext = nullptr,
@@ -78,6 +91,14 @@ constexpr ze_event_desc_t default_event_desc = { .stype = ZE_STRUCTURE_TYPE_EVEN
                                                  .index = 0,
                                                  .signal = 0,
                                                  .wait = 0 };
+
+inline init_mode operator|(init_mode mode1, init_mode mode2) {
+    return static_cast<init_mode>(static_cast<int>(mode1) | static_cast<int>(mode2));
+}
+
+inline bool operator&(init_mode mode1, init_mode mode2) {
+    return static_cast<int>(mode1) & static_cast<int>(mode2);
+}
 
 void load_module(std::string dir,
                  std::string file_name,
@@ -112,15 +133,25 @@ void get_queues_properties(ze_device_handle_t device,
 void get_comp_queue_ordinal(ze_device_handle_t device,
                             const ze_queue_properties_t& props,
                             uint32_t* ordinal);
+void get_copy_queue_ordinal(ze_device_handle_t device,
+                            const ze_queue_properties_t& props,
+                            uint32_t* ordinal);
 void get_queue_index(const ze_queue_properties_t& props,
                      uint32_t ordinal,
-                     int rank,
+                     int idx,
                      uint32_t* index);
 
 std::string to_string(const ze_result_t result);
 std::string to_string(const ze_group_size_t& group_size);
 std::string to_string(const ze_group_count_t& group_count);
 std::string to_string(const ze_kernel_args_t& kernel_args);
+std::string to_string(const ze_command_queue_group_property_flag_t& flag);
+std::string to_string(const ze_command_queue_group_properties_t& queue_property);
+
+std::string join_strings(const std::vector<std::string>& tokens, const std::string& delimeter);
+
+template <typename T>
+std::string flags_to_string(uint32_t flags);
 
 } // namespace ze
 } // namespace ccl

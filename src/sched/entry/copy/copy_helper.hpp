@@ -15,20 +15,31 @@
 */
 #pragma once
 
-#include "coll/coll_check.hpp"
 #include "common/datatype/datatype.hpp"
 #include "common/global/global.hpp"
 #include "common/utils/buffer.hpp"
 #include "common/utils/enums.hpp"
 #include "common/utils/tuple.hpp"
+#include "common/utils/sycl_utils.hpp"
 #include "oneapi/ccl/native_device_api/interop_utils.hpp"
 
-enum class copy_direction { h2h, d2h, h2d, d2d };
+enum class copy_direction { undefined, h2h, d2h, h2d, d2d };
 std::string to_string(copy_direction val);
 
-class copy_helper {
-public:
-    static const int invalid_rank;
+struct copy_attr {
+    int peer_rank;
+    size_t peer_buf_idx;
+    copy_direction direction;
+    ccl_comm* map_comm;
+    size_t in_buf_offset;
+
+    copy_attr(int peer_rank = ccl_comm::invalid_rank,
+              size_t peer_buf_idx = 0,
+              copy_direction direction = copy_direction::undefined,
+              ccl_comm* map_comm = nullptr,
+              size_t in_buf_offset = 0);
+
+    copy_attr(copy_direction direction, size_t in_buf_offset = 0);
 };
 
 #ifdef CCL_ENABLE_SYCL
@@ -94,7 +105,7 @@ struct sycl_copier {
                 auto device_ptr_type = sycl::get_pointer_type(void_device_ptr, q->get_context());
                 CCL_THROW_IF_NOT(device_ptr_type == sycl::usm::alloc::device,
                                  "unexpected USM type ",
-                                 ccl_usm_type_to_str(device_ptr_type),
+                                 ccl::utils::usm_type_to_str(device_ptr_type),
                                  " for device_ptr ",
                                  void_device_ptr);
             }
