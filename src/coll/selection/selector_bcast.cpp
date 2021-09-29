@@ -26,9 +26,9 @@ std::map<ccl_coll_bcast_algo, std::string>
     };
 
 ccl_algorithm_selector<ccl_coll_bcast>::ccl_algorithm_selector() {
-#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_bcast_topo_ring);
-#else // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
+#else // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     if (ccl::global_data::env().atl_transport == ccl_atl_ofi) {
         insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_bcast_naive);
         insert(main_table, 0, CCL_BCAST_SHORT_MSG_SIZE, ccl_coll_bcast_double_tree);
@@ -36,7 +36,7 @@ ccl_algorithm_selector<ccl_coll_bcast>::ccl_algorithm_selector() {
     else if (ccl::global_data::env().atl_transport == ccl_atl_mpi) {
         insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_bcast_direct);
     }
-#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     insert(fallback_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_bcast_naive);
 }
@@ -48,15 +48,21 @@ bool ccl_algorithm_selector_helper<ccl_coll_bcast_algo>::can_use(
     const ccl_selection_table_t<ccl_coll_bcast_algo>& table) {
     bool can_use = true;
 
+    ccl_coll_algo algo_param;
+    algo_param.bcast = algo;
+    can_use = ccl_can_use_datatype(algo_param, param);
+
     if (ccl::global_data::env().enable_unordered_coll && algo == ccl_coll_bcast_double_tree) {
         /* TODO: stabilize double_tree bcast for unordered_coll case */
         can_use = false;
     }
     else if (algo == ccl_coll_bcast_direct &&
-             (ccl::global_data::env().atl_transport == ccl_atl_ofi))
+             (ccl::global_data::env().atl_transport == ccl_atl_ofi)) {
         can_use = false;
-    else if (algo == ccl_coll_bcast_topo_ring && !ccl_can_use_topo_ring_algo(param))
+    }
+    else if (algo == ccl_coll_bcast_topo_ring && !ccl_can_use_topo_ring_algo(param)) {
         can_use = false;
+    }
 
     return can_use;
 }

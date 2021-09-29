@@ -96,6 +96,7 @@ env_data::env_data()
           mnic_type(ATL_MNIC_NONE),
           mnic_count(CCL_ENV_SIZET_NOT_SPECIFIED),
 
+          enable_algo_fallback(1),
           enable_unordered_coll(0),
 
           enable_fusion(0),
@@ -135,7 +136,6 @@ env_data::env_data()
 
           kernel_path(),
           kernel_debug(0),
-          enable_kernel_cache(1),
           kernel_group_size(CCL_ENV_SIZET_NOT_SPECIFIED),
           kernel_group_count(CCL_ENV_SIZET_NOT_SPECIFIED),
           enable_kernel_sync(1),
@@ -143,8 +143,14 @@ env_data::env_data()
           enable_kernel_1s_copy_ops(0),
           enable_kernel_1s_ipc_wa(0),
           enable_kernel_output_event(0),
+          enable_kernel_profile(0),
+
+          enable_ze_barrier(0),
+          enable_ze_cache(1),
           ze_serialize_mode(0),
           ze_copy_engine(ccl_ze_copy_engine_none),
+          ze_queue_index(1),
+          ze_close_ipc_wa(0),
 
           bf16_impl_type(ccl_bf16_no_compiler_support),
           fp16_impl_type(ccl_fp16_no_compiler_support) {
@@ -204,6 +210,7 @@ void env_data::parse() {
         mnic_count = worker_count;
     }
 
+    env_2_type(CCL_ALGO_FALLBACK, enable_algo_fallback);
     env_2_type(CCL_ALLGATHERV, allgatherv_algo_raw);
     env_2_type(CCL_ALLREDUCE, allreduce_algo_raw);
     env_2_type(CCL_ALLTOALL, alltoall_algo_raw);
@@ -290,7 +297,6 @@ void env_data::parse() {
     }
 
     env_2_type(CCL_KERNEL_DEBUG, kernel_debug);
-    env_2_type(CCL_KERNEL_CACHE, enable_kernel_cache);
     env_2_type(CCL_KERNEL_GROUP_SIZE, kernel_group_size);
     env_2_type(CCL_KERNEL_GROUP_COUNT, kernel_group_count);
     env_2_type(CCL_KERNEL_SYNC, enable_kernel_sync);
@@ -298,8 +304,14 @@ void env_data::parse() {
     env_2_type(CCL_KERNEL_1S_USE_COPY_OPS, enable_kernel_1s_copy_ops);
     env_2_type(CCL_KERNEL_1S_IPC_WA, enable_kernel_1s_ipc_wa);
     env_2_type(CCL_KERNEL_OUTPUT_EVENT, enable_kernel_output_event);
+    env_2_type(CCL_KERNEL_PROFILE, enable_kernel_profile);
+
+    env_2_type(CCL_ZE_BARRIER, enable_ze_barrier);
+    env_2_type(CCL_ZE_CACHE, enable_ze_cache);
     env_2_type(CCL_ZE_SERIALIZE, ze_serialize_mode);
     env_2_enum(CCL_ZE_COPY_ENGINE, ze_copy_engine_names, ze_copy_engine);
+    env_2_type(CCL_ZE_QUEUE_INDEX, ze_queue_index);
+    env_2_type(CCL_ZE_CLOSE_IPC_WA, ze_close_ipc_wa);
 
     auto bf16_impl_types = ccl_bf16_get_impl_types();
     ccl_bf16_impl_type bf16_env_impl_type;
@@ -401,6 +413,7 @@ void env_data::print(int rank) {
         CCL_MNIC_NAME, ": ", (mnic_name_raw.length()) ? mnic_name_raw : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_MNIC_COUNT, ": ", mnic_count);
 
+    LOG_INFO(CCL_ALGO_FALLBACK, ": ", enable_algo_fallback);
     LOG_INFO(CCL_ALLGATHERV,
              ": ",
              (allgatherv_algo_raw.length()) ? allgatherv_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
@@ -476,7 +489,6 @@ void env_data::print(int rank) {
     LOG_INFO(
         CCL_KERNEL_PATH, ": ", (!kernel_path.empty()) ? kernel_path : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_KERNEL_DEBUG, ": ", kernel_debug);
-    LOG_INFO(CCL_KERNEL_CACHE, ": ", enable_kernel_cache);
     LOG_INFO(CCL_KERNEL_GROUP_SIZE,
              ": ",
              (kernel_group_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(kernel_group_size)
@@ -491,8 +503,14 @@ void env_data::print(int rank) {
     LOG_INFO(CCL_KERNEL_1S_USE_COPY_OPS, ": ", enable_kernel_1s_copy_ops);
     LOG_INFO(CCL_KERNEL_1S_IPC_WA, ": ", enable_kernel_1s_ipc_wa);
     LOG_INFO(CCL_KERNEL_OUTPUT_EVENT, ": ", enable_kernel_output_event);
+    LOG_INFO(CCL_KERNEL_PROFILE, ": ", enable_kernel_profile);
+
+    LOG_INFO(CCL_ZE_BARRIER, ": ", enable_ze_barrier);
+    LOG_INFO(CCL_ZE_CACHE, ": ", enable_ze_cache);
     LOG_INFO(CCL_ZE_SERIALIZE, ": ", ze_serialize_mode);
     LOG_INFO(CCL_ZE_COPY_ENGINE, ": ", str_by_enum(ze_copy_engine_names, ze_copy_engine));
+    LOG_INFO(CCL_ZE_QUEUE_INDEX, ": ", ze_queue_index);
+    LOG_INFO(CCL_ZE_CLOSE_IPC_WA, ": ", ze_close_ipc_wa);
 #endif // CCL_ENABLE_SYCL
 
     LOG_INFO(CCL_BF16, ": ", str_by_enum(bf16_impl_names, bf16_impl_type));
@@ -516,7 +534,7 @@ void env_data::print(int rank) {
 
 void env_data::set_internal_env() {
     auto attr = ccl_executor::generate_atl_attr(*this);
-    atl_wrapper::set_internal_env(attr);
+    atl_comm_manager::set_internal_env(attr);
     if (log_level >= ccl_log_level::info) {
         setenv("I_MPI_DEBUG", "4", 0);
     }

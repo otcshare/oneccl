@@ -157,6 +157,7 @@ ccl::status ccl_coll_build_allgatherv(ccl_sched* sched,
     param.comm = comm;
     param.is_vector_buf = sched->coll_attr.is_vector_buf;
     param.hint_algo = sched->hint_algo;
+    param.stream = sched->coll_param.stream;
 
     auto algo = ccl::global_data::get().algorithm_selector->get<ccl_coll_allgatherv>(param);
 
@@ -173,6 +174,12 @@ ccl::status ccl_coll_build_allgatherv(ccl_sched* sched,
             CCL_CALL(ccl_coll_build_ring_allgatherv(
                 sched, send_buf, send_count, recv_buf, recv_counts, dtype, comm));
             break;
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+        case ccl_coll_allgatherv_topo_a2a:
+            CCL_CALL(ccl_coll_build_topo_a2a_allgatherv(
+                sched, send_buf, send_count, recv_buf, recv_counts, dtype, comm));
+            break;
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
         default:
             CCL_FATAL("unexpected allgatherv_algo ", ccl_coll_algorithm_to_str(algo));
             return ccl::status::invalid_arguments;
@@ -245,12 +252,16 @@ ccl::status ccl_coll_build_allreduce(ccl_sched* sched,
             CCL_CALL(comm->allreduce_2d_builder->build(
                 sched, send_buf, recv_buf, count, dtype, reduction));
             break;
-#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
         case ccl_coll_allreduce_topo_ring:
-            CCL_CALL(ccl_coll_build_gpu_allreduce(
+            CCL_CALL(ccl_coll_build_topo_ring_allreduce(
                 sched, send_buf, recv_buf, count, dtype, reduction, comm));
             break;
-#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
+        case ccl_coll_allreduce_topo_a2a:
+            CCL_CALL(ccl_coll_build_topo_a2a_allreduce(
+                sched, send_buf, recv_buf, count, dtype, reduction, comm));
+            break;
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
         default:
             CCL_FATAL("unexpected allreduce_algo ", ccl_coll_algorithm_to_str(algo));
             return ccl::status::invalid_arguments;
@@ -387,11 +398,11 @@ ccl::status ccl_coll_build_bcast(ccl_sched* sched,
         case ccl_coll_bcast_naive:
             CCL_CALL(ccl_coll_build_naive_bcast(sched, buf, count, dtype, root, comm));
             break;
-#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
         case ccl_coll_bcast_topo_ring:
             CCL_CALL(ccl_coll_build_gpu_bcast(sched, buf, count, dtype, root, comm));
             break;
-#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
         default:
             CCL_FATAL("unexpected bcast_algo ", ccl_coll_algorithm_to_str(algo));
             return ccl::status::invalid_arguments;
@@ -408,6 +419,7 @@ ccl::status ccl_coll_build_reduce(ccl_sched* sched,
                                   int root,
                                   ccl_comm* comm) {
     ccl::status status = ccl::status::success;
+    CCL_THROW_IF_NOT(root >= 0 && root < comm->size(), "wrong root");
 
     ccl_selector_param param;
     param.ctype = ccl_coll_reduce;
@@ -415,6 +427,10 @@ ccl::status ccl_coll_build_reduce(ccl_sched* sched,
     param.dtype = dtype;
     param.comm = comm;
     param.stream = sched->coll_param.stream;
+    param.buf = send_buf.get_ptr();
+#ifdef CCL_ENABLE_SYCL
+    param.is_sycl_buf = sched->coll_attr.is_sycl_buf;
+#endif // CCL_ENABLE_SYCL
     param.hint_algo = sched->hint_algo;
 
     auto algo = ccl::global_data::get().algorithm_selector->get<ccl_coll_reduce>(param);
@@ -444,12 +460,12 @@ ccl::status ccl_coll_build_reduce(ccl_sched* sched,
                 root == 0 ? comm->dtree() : comm->dtree().copy_with_new_root(root),
                 comm));
             break;
-#if defined(CCL_ENABLE_SYCL) && defined(MULTI_GPU_SUPPORT)
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
         case ccl_coll_reduce_topo_ring:
             CCL_CALL(ccl_coll_build_gpu_reduce(
                 sched, send_buf, recv_buf, count, dtype, reduction, root, comm));
             break;
-#endif // CCL_ENABLE_SYCL && MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
         default:
             CCL_FATAL("unexpected reduce_algo ", ccl_coll_algorithm_to_str(algo));
             return ccl::status::invalid_arguments;

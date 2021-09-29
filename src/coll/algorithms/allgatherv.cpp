@@ -19,6 +19,9 @@
 #include "sched/entry/coll/coll_entry_helper.hpp"
 #include "sched/entry/factory/chunked_entry_factory.hpp"
 #include "sched/entry/factory/entry_factory.hpp"
+#if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
+#include "coll/coll_util.hpp"
+#endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
 ccl::status ccl_coll_build_direct_allgatherv(ccl_sched* sched,
                                              ccl_buffer send_buf,
@@ -29,7 +32,7 @@ ccl::status ccl_coll_build_direct_allgatherv(ccl_sched* sched,
                                              ccl_comm* comm) {
     LOG_DEBUG("build direct allgatherv");
 
-    entry_factory::make_entry<allgatherv_entry>(
+    entry_factory::create<allgatherv_entry>(
         sched, send_buf, send_count, recv_buf, recv_counts, dtype, comm);
     return ccl::status::success;
 }
@@ -56,7 +59,7 @@ ccl::status ccl_coll_build_naive_allgatherv(ccl_sched* sched,
 
     if (send_buf != recv_buf) {
         // out-of-place case
-        entry_factory::make_entry<copy_entry>(
+        entry_factory::create<copy_entry>(
             sched, send_buf, recv_buf + offsets[this_rank], send_count, dtype);
     }
 
@@ -99,7 +102,7 @@ ccl::status ccl_coll_build_ring_allgatherv(ccl_sched* sched,
     }
 
     if (send_buf != recv_buf) {
-        entry_factory::make_entry<copy_entry>(
+        entry_factory::create<copy_entry>(
             sched, send_buf, recv_buf + offsets[rank], send_count, dtype);
     }
 
@@ -124,8 +127,8 @@ ccl::status ccl_coll_build_ring_allgatherv(ccl_sched* sched,
         sbuf = recv_buf + send_block_offset;
         rbuf = recv_buf + recv_block_offset;
 
-        entry_factory::make_entry<send_entry>(sched, sbuf, send_block_count, dtype, dst, comm);
-        entry_factory::make_entry<recv_entry>(sched, rbuf, recv_block_count, dtype, src, comm);
+        entry_factory::create<send_entry>(sched, sbuf, send_block_count, dtype, dst, comm);
+        entry_factory::create<recv_entry>(sched, rbuf, recv_block_count, dtype, src, comm);
         sched->add_barrier();
 
         block_idx = (comm_size + block_idx - 1) % comm_size; // move left
@@ -197,13 +200,13 @@ ccl::status ccl_coll_build_flat_allgatherv(ccl_master_sched* main_sched,
                                ccl_buffer_type::INDIRECT);
 
     if (!inplace) {
-        entry_factory::make_entry<copy_entry>(scheds[2 * comm_rank % sched_count],
-                                              ccl_buffer(coll_param.get_send_buf_ptr(),
-                                                         coll_param.get_send_count() * dtype_size,
-                                                         ccl_buffer_type::INDIRECT),
-                                              recv_bufs[comm_rank],
-                                              coll_param.get_recv_count(comm_rank),
-                                              dtype);
+        entry_factory::create<copy_entry>(scheds[2 * comm_rank % sched_count],
+                                          ccl_buffer(coll_param.get_send_buf_ptr(),
+                                                     coll_param.get_send_count() * dtype_size,
+                                                     ccl_buffer_type::INDIRECT),
+                                          recv_bufs[comm_rank],
+                                          coll_param.get_recv_count(comm_rank),
+                                          dtype);
     }
     else {
         size_t total_recv_bytes =
@@ -225,19 +228,19 @@ ccl::status ccl_coll_build_flat_allgatherv(ccl_master_sched* main_sched,
         if (static_cast<int>(idx) == comm_rank)
             continue;
 
-        entry_factory::make_entry<recv_entry>(scheds[(comm_rank + idx) % sched_count],
-                                              recv_bufs[idx],
-                                              coll_param.get_recv_count(idx),
-                                              dtype,
-                                              idx,
-                                              comm);
+        entry_factory::create<recv_entry>(scheds[(comm_rank + idx) % sched_count],
+                                          recv_bufs[idx],
+                                          coll_param.get_recv_count(idx),
+                                          dtype,
+                                          idx,
+                                          comm);
 
-        entry_factory::make_entry<send_entry>(scheds[(comm_rank + idx) % sched_count],
-                                              send_seg,
-                                              coll_param.get_recv_count(comm_rank),
-                                              dtype,
-                                              idx,
-                                              comm);
+        entry_factory::create<send_entry>(scheds[(comm_rank + idx) % sched_count],
+                                          send_seg,
+                                          coll_param.get_recv_count(comm_rank),
+                                          dtype,
+                                          idx,
+                                          comm);
     }
     main_sched->sync_partial_scheds();
 
@@ -279,15 +282,14 @@ ccl::status ccl_coll_build_multi_bcast_allgatherv(ccl_master_sched* main_sched,
         CCL_ASSERT(scheds.size() >= data_partition_count);
 
         for (size_t idx = 0; idx < data_partition_count; idx++) {
-            entry_factory::make_entry<copy_entry>(
-                scheds[idx],
-                ccl_buffer(coll_param.get_send_buf_ptr(),
-                           coll_param.get_send_count() * dtype_size,
-                           copy_offsets[idx],
-                           ccl_buffer_type::INDIRECT),
-                recv_bufs[comm_rank] + copy_offsets[idx],
-                copy_counts[idx],
-                dtype);
+            entry_factory::create<copy_entry>(scheds[idx],
+                                              ccl_buffer(coll_param.get_send_buf_ptr(),
+                                                         coll_param.get_send_count() * dtype_size,
+                                                         copy_offsets[idx],
+                                                         ccl_buffer_type::INDIRECT),
+                                              recv_bufs[comm_rank] + copy_offsets[idx],
+                                              copy_counts[idx],
+                                              dtype);
         }
         main_sched->sync_partial_scheds();
     }
@@ -306,3 +308,31 @@ ccl::status ccl_coll_build_multi_bcast_allgatherv(ccl_master_sched* main_sched,
 
     return ccl::status::success;
 }
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+
+ccl::status ccl_coll_build_topo_a2a_allgatherv(ccl_sched* sched,
+                                               ccl_buffer send_buf,
+                                               size_t send_count,
+                                               ccl_buffer recv_buf,
+                                               const size_t* recv_counts,
+                                               const ccl_datatype& dtype,
+                                               ccl_comm* comm) {
+    LOG_DEBUG("build topo_a2a allgatherv, send_count ", send_count);
+
+    const std::vector<ze_handle_exchange_entry::mem_desc_t> in_buffers{
+        { recv_buf.get_ptr(), ccl::ze::ipc_mem_type::memory }, // 0
+    };
+
+    ccl::add_handle_exchange(sched, comm, in_buffers);
+
+    entry_factory::create<ze_a2a_allgatherv_entry>(
+        sched, send_buf, send_count, recv_buf, recv_counts, dtype, comm);
+    sched->add_barrier();
+
+    ccl::add_comm_barrier(sched, comm);
+
+    return ccl::status::success;
+}
+
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE

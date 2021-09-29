@@ -63,6 +63,7 @@ constexpr const char* CCL_MNIC = "CCL_MNIC";
 constexpr const char* CCL_MNIC_NAME = "CCL_MNIC_NAME";
 constexpr const char* CCL_MNIC_COUNT = "CCL_MNIC_COUNT";
 
+constexpr const char* CCL_ALGO_FALLBACK = "CCL_ALGO_FALLBACK";
 constexpr const char* CCL_ALLGATHERV = "CCL_ALLGATHERV";
 constexpr const char* CCL_ALLREDUCE = "CCL_ALLREDUCE";
 constexpr const char* CCL_ALLTOALL = "CCL_ALLTOALL";
@@ -108,7 +109,7 @@ constexpr const char* CCL_ALLTOALL_SCATTER_PLAIN = "CCL_ALLTOALL_SCATTER_PLAIN";
 constexpr const char* CCL_COMM_KERNELS = "CCL_COMM_KERNELS";
 constexpr const char* CCL_KERNEL_PATH = "CCL_KERNEL_PATH";
 constexpr const char* CCL_KERNEL_DEBUG = "CCL_KERNEL_DEBUG";
-constexpr const char* CCL_KERNEL_CACHE = "CCL_KERNEL_CACHE";
+constexpr const char* CCL_ZE_CACHE = "CCL_ZE_CACHE";
 constexpr const char* CCL_KERNEL_GROUP_SIZE = "CCL_KERNEL_GROUP_SIZE";
 constexpr const char* CCL_KERNEL_GROUP_COUNT = "CCL_KERNEL_GROUP_COUNT";
 constexpr const char* CCL_KERNEL_SYNC = "CCL_KERNEL_SYNC";
@@ -116,8 +117,12 @@ constexpr const char* CCL_KERNEL_1S_LEAD = "CCL_KERNEL_1S_LEAD";
 constexpr const char* CCL_KERNEL_1S_USE_COPY_OPS = "CCL_KERNEL_1S_USE_COPY_OPS";
 constexpr const char* CCL_KERNEL_1S_IPC_WA = "CCL_KERNEL_1S_IPC_WA";
 constexpr const char* CCL_KERNEL_OUTPUT_EVENT = "CCL_KERNEL_OUTPUT_EVENT";
+constexpr const char* CCL_KERNEL_PROFILE = "CCL_KERNEL_PROFILE";
+constexpr const char* CCL_ZE_BARRIER = "CCL_ZE_BARRIER";
 constexpr const char* CCL_ZE_SERIALIZE = "CCL_ZE_SERIALIZE";
 constexpr const char* CCL_ZE_COPY_ENGINE = "CCL_ZE_COPY_ENGINE";
+constexpr const char* CCL_ZE_QUEUE_INDEX = "CCL_ZE_QUEUE_INDEX";
+constexpr const char* CCL_ZE_CLOSE_IPC_WA = "CCL_ZE_CLOSE_IPC_WA";
 
 constexpr const char* CCL_BF16 = "CCL_BF16";
 constexpr const char* CCL_FP16 = "CCL_FP16";
@@ -191,6 +196,7 @@ public:
        so hide it inside algorithm_selector module
        and store only raw strings in env_data
     */
+    int enable_algo_fallback;
     std::string allgatherv_algo_raw;
     std::string allreduce_algo_raw;
     std::string alltoall_algo_raw;
@@ -235,7 +241,6 @@ public:
 
     std::string kernel_path;
     int kernel_debug;
-    int enable_kernel_cache;
     ssize_t kernel_group_size;
     ssize_t kernel_group_count;
     int enable_kernel_sync;
@@ -243,8 +248,14 @@ public:
     int enable_kernel_1s_copy_ops;
     int enable_kernel_1s_ipc_wa;
     int enable_kernel_output_event;
+    int enable_kernel_profile;
+
+    int enable_ze_barrier;
+    int enable_ze_cache;
     int ze_serialize_mode;
     ccl_ze_copy_engine_mode ze_copy_engine;
+    int ze_queue_index;
+    int ze_close_ipc_wa;
 
     ccl_bf16_impl_type bf16_impl_type;
     ccl_fp16_impl_type fp16_impl_type;

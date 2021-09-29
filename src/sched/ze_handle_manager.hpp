@@ -18,7 +18,7 @@
 #include "common/log/log.hpp"
 #include "common/stream/stream.hpp"
 #include "common/utils/buffer.hpp"
-#include "sched/entry/gpu/ze_primitives.hpp"
+#include "sched/entry/ze/ze_primitives.hpp"
 
 #include <unordered_map>
 #include <ze_api.h>
@@ -41,6 +41,7 @@ struct ipc_handle_info {
 
     ipc_handle_info();
     ipc_handle_info(const ze_ipc_mem_handle_t& handle, size_t offset, ipc_mem_type type);
+    ipc_handle_info(const ipc_handle_info&) = default;
     ipc_handle_info& operator=(const ipc_handle_info&) = default;
 };
 
@@ -57,7 +58,10 @@ public:
     void clear();
 
     void set(const mem_handle_map_t& handles_arg);
+
+    void* get_ptr(int rank, size_t buf_idx, ccl_comm* map_comm);
     void get(int rank, size_t buf_idx, ccl_buffer& buf, ccl_comm* map_comm = nullptr);
+    void get(int rank, size_t buf_idx, ze_event_pool_handle_t& buf, ccl_comm* map_comm);
 
     void get_handle(const void* buffer, ze_ipc_mem_handle_t* handle);
     void get_handle(ze_event_pool_handle_t pool, ze_ipc_event_pool_handle_t* handle);

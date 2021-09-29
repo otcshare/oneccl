@@ -18,7 +18,7 @@
 #include <atomic>
 #include <unordered_map>
 
-#include "atl/atl_wrapper.h"
+#include "atl/atl_base_comm.hpp"
 #include "coll/algorithms/allreduce/allreduce_2d.hpp"
 #include "common/comm/comm_id_storage.hpp"
 #include "common/comm/atl_tag.hpp"
@@ -53,7 +53,7 @@ public:
     ccl_comm(int rank,
              int size,
              ccl_comm_id_storage::comm_id&& id,
-             std::shared_ptr<atl_wrapper> atl,
+             std::shared_ptr<atl_base_comm> atl,
              bool share_resources = false,
              ccl::host_communicator* host_comm = nullptr);
 
@@ -61,7 +61,7 @@ public:
              int size,
              ccl_comm_id_storage::comm_id&& id,
              ccl_rank2rank_map&& ranks,
-             std::shared_ptr<atl_wrapper> atl,
+             std::shared_ptr<atl_base_comm> atl,
              bool share_resources = false,
              ccl::host_communicator* host_comm = nullptr);
 
@@ -154,7 +154,14 @@ public:
      * @param rank a rank which is part of the current communicator
      * @return number of @c rank in the global communicator
      */
-    int get_global_rank(int rank) const;
+    int get_global_rank(int rank, bool only_global = false) const;
+
+    /**
+     * Returns the number of @c rank in the current communicator
+     * @param global_rank a rank which is part of the global communicator
+     * @return number of @c rank in the current communicator
+     */
+    int get_rank_from_global(int global_rank) const;
 
     const ccl_double_tree& dtree() const {
         return m_dtree;
@@ -169,7 +176,7 @@ public:
      */
     static constexpr ccl_sched_id_t max_sched_count = std::numeric_limits<ccl_sched_id_t>::max();
 
-    std::shared_ptr<atl_wrapper> atl;
+    std::shared_ptr<atl_base_comm> atl;
     std::unique_ptr<ccl_unordered_coll_manager> unordered_coll_manager;
     std::unique_ptr<ccl_allreduce_2d_builder> allreduce_2d_builder;
 

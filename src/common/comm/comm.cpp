@@ -43,7 +43,7 @@ void ccl_comm::allocate_resources() {
 ccl_comm::ccl_comm(int rank,
                    int size,
                    ccl_comm_id_storage::comm_id&& id,
-                   std::shared_ptr<atl_wrapper> atl,
+                   std::shared_ptr<atl_base_comm> atl,
                    bool share_resources,
                    ccl::host_communicator* host_comm)
         : ccl_comm(rank,
@@ -58,7 +58,7 @@ ccl_comm::ccl_comm(int rank,
                    int size,
                    ccl_comm_id_storage::comm_id&& id,
                    ccl_rank2rank_map&& rank_map,
-                   std::shared_ptr<atl_wrapper> atl,
+                   std::shared_ptr<atl_base_comm> atl,
                    bool share_resources,
                    ccl::host_communicator* host_comm)
         : atl(atl),
@@ -97,7 +97,7 @@ ccl_comm::ccl_comm(const std::vector<int>& local_ranks,
           host_comm(host_comm) {
     std::shared_ptr<ikvs_wrapper> kvs_wrapper(new users_kvs(kvs_instance));
 
-    atl = std::shared_ptr<atl_wrapper>(new atl_wrapper(comm_size, local_ranks, kvs_wrapper));
+    atl = atl_comm_manager::create_comm(comm_size, local_ranks, kvs_wrapper);
 
     thread_number = atl->get_threads_per_process();
     on_process_ranks_number = atl->get_ranks_per_process();
@@ -168,9 +168,10 @@ std::shared_ptr<ccl_comm> ccl_comm::clone_with_new_id(ccl_comm_id_storage::comm_
                                       true /*share_resources*/,
                                       get_host_comm());
 }
-
-int ccl_comm::get_global_rank(int rank) const {
-    if (m_local2global_map.empty()) {
+//TODO: will fix it after OFI refactoring
+int ccl_comm::get_global_rank(int rank, bool only_global) const {
+    if (m_local2global_map.empty() ||
+        (ccl::global_data::env().atl_transport == ccl_atl_mpi && !only_global)) {
         // global comm and its copies do not have entries in the map
         return rank;
     }
@@ -184,6 +185,26 @@ int ccl_comm::get_global_rank(int rank) const {
                      m_id.value());
     int global_rank = m_local2global_map[rank];
     LOG_DEBUG(
-        "comm , ", this, " id ", m_id.value(), ", map rank ", rank, " to global ", global_rank);
+        "comm ", this, ", id ", m_id.value(), ", map rank ", rank, " to global ", global_rank);
     return global_rank;
+}
+
+int ccl_comm::get_rank_from_global(int global_rank) const {
+    if (m_local2global_map.empty()) {
+        // global comm and its copies do not have entries in the map
+        return global_rank;
+    }
+
+    int rank = ccl_comm::invalid_rank;
+
+    for (size_t i = 0; i < m_local2global_map.size(); ++i) {
+        if (m_local2global_map[i] == global_rank) {
+            rank = static_cast<int>(i);
+            break;
+        }
+    }
+
+    CCL_THROW_IF_NOT(rank != ccl_comm::invalid_rank, "can't find rank");
+
+    return rank;
 }

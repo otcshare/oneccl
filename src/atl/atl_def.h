@@ -19,6 +19,8 @@
 #include <stdint.h>
 #include <string>
 
+#include <cstring>
+
 #ifndef container_of
 #define container_of(ptr, type, field) ((type*)((char*)ptr - offsetof(type, field)))
 #endif
@@ -147,11 +149,13 @@ typedef struct {
     size_t hostname_hash;
 } atl_proc_coord_t;
 
-typedef struct {
-    uint64_t tag;
-    size_t remote_proc_idx;
+typedef struct atl_req {
+    int is_completed;
     void* internal[ATL_REQ_SIZE];
-} atl_req_t __attribute__((aligned(ATL_CACHELINE_LEN)));
+    atl_req() : is_completed(0) {
+        memset(internal, 0, ATL_REQ_SIZE * sizeof(void*));
+    }
+} atl_req_t;
 
 struct atl_ctx {
     atl_proc_coord_t coord;

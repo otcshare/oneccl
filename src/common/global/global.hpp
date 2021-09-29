@@ -18,7 +18,6 @@
 #include "coll/algorithms/algorithms_enum.hpp"
 #include "common/env/env.hpp"
 #include "common/utils/utils.hpp"
-#include "common/comm/l0/comm_context_storage.hpp"
 #include "hwloc/hwloc_wrapper.hpp"
 #include "internal_types.hpp"
 
@@ -91,9 +90,9 @@ public:
     std::unique_ptr<ccl_hwloc_wrapper> hwloc_wrapper;
     std::atomic<size_t> kernel_counter;
 
-#ifdef MULTI_GPU_SUPPORT
+#ifdef CCL_ENABLE_ZE
     std::unique_ptr<ze::cache> ze_cache;
-#endif // MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_ZE
 
     static thread_local bool is_worker_thread;
     bool is_ft_enabled;
@@ -104,10 +103,10 @@ private:
     void init_resize_independent_objects();
     void reset_resize_independent_objects();
 
-#ifdef MULTI_GPU_SUPPORT
+#ifdef CCL_ENABLE_ZE
     void init_gpu();
     void finalize_gpu();
-#endif // MULTI_GPU_SUPPORT
+#endif // CCL_ENABLE_ZE
 
     env_data env_object;
 };

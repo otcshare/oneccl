@@ -30,7 +30,8 @@ enum ccl_coll_allgatherv_algo {
     ccl_coll_allgatherv_naive,
     ccl_coll_allgatherv_ring,
     ccl_coll_allgatherv_flat,
-    ccl_coll_allgatherv_multi_bcast
+    ccl_coll_allgatherv_multi_bcast,
+    ccl_coll_allgatherv_topo_a2a
 };
 
 enum ccl_coll_allreduce_algo {
@@ -44,7 +45,8 @@ enum ccl_coll_allreduce_algo {
     ccl_coll_allreduce_double_tree,
     ccl_coll_allreduce_recursive_doubling,
     ccl_coll_allreduce_2d,
-    ccl_coll_allreduce_topo_ring
+    ccl_coll_allreduce_topo_ring,
+    ccl_coll_allreduce_topo_a2a
 };
 
 enum ccl_coll_alltoall_algo {
@@ -136,8 +138,8 @@ enum ccl_coll_type {
     ccl_coll_sparse_allreduce,
     ccl_coll_last_regular = ccl_coll_sparse_allreduce,
 
-    ccl_coll_internal,
     ccl_coll_partial,
+    ccl_coll_undefined,
 
     ccl_coll_last_value
 };

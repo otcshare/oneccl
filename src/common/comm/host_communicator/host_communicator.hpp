@@ -15,7 +15,7 @@
 */
 #pragma once
 
-#include "atl/atl_wrapper.h"
+#include "atl/atl_base_comm.hpp"
 #include "common/comm/comm.hpp"
 #include "common/stream/stream.hpp"
 #include "oneapi/ccl/types.hpp"
@@ -73,18 +73,6 @@ public:
         return true;
     }
 
-    const ccl::group_unique_key& get_comm_group_id() const override {
-        return owner_id;
-    }
-
-    void set_comm_group_id(ccl::group_unique_key id) {
-        owner_id = id;
-    }
-
-#ifdef MULTI_GPU_SUPPORT
-    void visit(ccl::gpu_comm_attr& comm_attr) override;
-#endif
-
     ccl::device_index_type get_device_path() const override;
     ccl::communicator_interface::device_t get_device() const override;
     ccl::communicator_interface::context_t get_context() const override;
@@ -130,15 +118,15 @@ public:
     host_communicator(int size, int rank, shared_ptr_class<ikvs_wrapper> kvs);
     host_communicator(ccl::unified_device_type&& device,
                       ccl::unified_context_type&& context,
-                      std::shared_ptr<atl_wrapper> atl);
-    host_communicator(std::shared_ptr<atl_wrapper> atl);
+                      std::shared_ptr<atl_base_comm> atl);
+    host_communicator(std::shared_ptr<atl_base_comm> atl);
     host_communicator(std::shared_ptr<ccl_comm> impl, bool is_sub_communicator = false);
     host_communicator(host_communicator& src) = delete;
     host_communicator(host_communicator&& src) = default;
     host_communicator& operator=(host_communicator& src) = delete;
     host_communicator& operator=(host_communicator&& src) = default;
     ~host_communicator() = default;
-    std::shared_ptr<atl_wrapper> get_atl();
+    std::shared_ptr<atl_base_comm> get_atl();
     std::shared_ptr<host_communicator> get_r2r_comm();
     std::shared_ptr<host_communicator> get_node_comm();
     std::shared_ptr<host_communicator> get_even_comm();
@@ -163,14 +151,13 @@ private:
     ccl::comm_split_attr comm_attr;
     int comm_rank;
     int comm_size;
-    ccl::group_unique_key owner_id;
 
     host_communicator* get_impl() {
         return this;
     }
 
     void exchange_colors(std::vector<int>& colors);
-    void create_sub_comms(std::shared_ptr<atl_wrapper> atl);
+    void create_sub_comms(std::shared_ptr<atl_base_comm> atl);
     ccl_comm* create_with_color(int color,
                                 ccl_comm_id_storage* comm_ids,
                                 const ccl_comm* parent_comm);

@@ -92,8 +92,6 @@ Available algorithms for each collective operation (``<algo_name>``):
      - reduce_scatter + allgather ring.
        Use ``CCL_RS_CHUNK_COUNT`` and ``CCL_RS_MIN_CHUNK_SIZE``
        to control pipelining on reduce_scatter phase.
-   * - ``ring_rma``
-     - reduce_scatter+allgather ring using RMA communications
    * - ``double_tree``
      - Double-tree algorithm
    * - ``recursive_doubling``
@@ -369,8 +367,11 @@ CCL_FUSION_CYCLE_MS
 Set this environment variable to specify the frequency of checking for collectives operations to be fused.
 
 
+ATL
+###
+
 CCL_ATL_TRANSPORT
-#################
+*****************
 **Syntax**
 
 :: 
@@ -393,7 +394,36 @@ CCL_ATL_TRANSPORT
 
 **Description**
 
-Set this environment variable to select the transport for inter-node communications.
+Set this environment variable to select the transport for inter-process communications.
+
+
+CCL_ATL_HMEM
+************
+**Syntax**
+
+::
+
+  CCL_ATL_HMEM=<value>
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``1``
+     - Enable heterogeneous memory support on the transport layer.
+   * - ``0``
+     - Disable heterogeneous memory support on the transport layer (**default**).
+
+**Description**
+
+Set this environment variable to enable handling of HMEM/GPU buffers by the transport layer.
+The actual HMEM support depends on the limitations on the transport level and system configuration.
+
 
 CCL_UNORDERED_COLL
 ##################

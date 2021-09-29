@@ -157,13 +157,13 @@ void ccl_unordered_coll_manager::start_coordination(const std::string& match_id)
     CCL_THROW_IF_NOT(!match_id.empty(), "match_id is empty");
 
     ccl_coll_param coll_param{};
-    coll_param.ctype = ccl_coll_internal;
+    coll_param.ctype = ccl_coll_undefined;
     coll_param.dtype = ccl_datatype_int8;
     coll_param.comm = coordination_comm.get();
 
-    std::unique_ptr<ccl_extra_sched> service_sched(
-        new ccl_extra_sched(coll_param, coordination_comm->get_sched_id(true)));
-    service_sched->internal_type = ccl_sched_internal_unordered_coll;
+    std::unique_ptr<ccl_extra_sched> service_sched(new ccl_extra_sched(
+        { ccl_sched_unordered_coll, coordination_comm->get_sched_id(true), coll_param }));
+
     if (ccl::global_data::env().priority_mode == ccl_priority_lifo) {
         service_sched->coll_attr.priority = ccl_sched_base::get_lifo_priority();
     }
@@ -202,7 +202,7 @@ void ccl_unordered_coll_manager::start_coordination(const std::string& match_id)
     match_id_size_param.dtype = ccl_datatype_int8;
     match_id_size_param.root = CCL_UNORDERED_COLL_COORDINATOR;
     match_id_size_param.comm = coll_param.comm;
-    entry_factory::make_entry<coll_entry>(service_sched.get(), match_id_size_param);
+    entry_factory::create<coll_entry>(service_sched.get(), match_id_size_param);
 
     service_sched->add_barrier();
 
@@ -214,7 +214,7 @@ void ccl_unordered_coll_manager::start_coordination(const std::string& match_id)
     match_id_val_param.dtype = ccl_datatype_int8;
     match_id_val_param.root = CCL_UNORDERED_COLL_COORDINATOR;
     match_id_val_param.comm = coll_param.comm;
-    auto entry = entry_factory::make_entry<coll_entry>(service_sched.get(), match_id_val_param);
+    auto entry = entry_factory::create<coll_entry>(service_sched.get(), match_id_val_param);
 
     entry->set_field_fn<ccl_sched_entry_field_recv_buf>(
         [](const void* fn_ctx, void* field_ptr) {
@@ -249,12 +249,12 @@ void ccl_unordered_coll_manager::start_coordination(const std::string& match_id)
     reserved_comm_id_param.dtype = ccl_datatype_int8;
     reserved_comm_id_param.root = CCL_UNORDERED_COLL_COORDINATOR;
     reserved_comm_id_param.comm = coll_param.comm;
-    entry_factory::make_entry<coll_entry>(service_sched.get(), reserved_comm_id_param);
+    entry_factory::create<coll_entry>(service_sched.get(), reserved_comm_id_param);
 
     service_sched->add_barrier();
 
     /* 4. start post actions (create communicator and start postponed schedules) */
-    entry_factory::make_entry<function_entry>(
+    entry_factory::create<function_entry>(
         service_sched.get(),
         [](const void* func_ctx) -> ccl::status {
             auto ctx = static_cast<ccl_unordered_coll_ctx*>(const_cast<void*>(func_ctx));

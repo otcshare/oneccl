@@ -13,30 +13,23 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
-#include "sched/entry/reduce_local_entry.hpp"
-
-#include "common/comm/l0/modules/kernel_utils.hpp"
 #include "common/datatype/datatype.hpp"
 #include "common/stream/stream.hpp"
 #include "common/utils/sycl_utils.hpp"
-#include "sched/entry/gpu/ze_primitives.hpp"
-#include "sched/entry/gpu/ze_cache.hpp"
+#include "sched/entry/ze/ze_primitives.hpp"
+#include "sched/entry/ze/ze_cache.hpp"
+#include "sched/entry/reduce_local_entry.hpp"
 #include "sched/queue/queue.hpp"
 
 #include <string>
 
 using namespace ccl;
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+
 using namespace ccl::ze;
 
-void reduce_local_entry::init() {
-    if (ze_base_entry::is_initialized) {
-        return;
-    }
-
-    LOG_DEBUG("initialization");
-
-    ze_base_entry::init(init_mode::compute);
-
+void reduce_local_entry::init_ze_hook() {
     ccl::global_data::get().ze_cache->get(context, device, "kernels.spv", &module);
 
     kernel_name =
@@ -57,10 +50,7 @@ void reduce_local_entry::init() {
     size_t bytes = in_cnt * dtype.size();
     in_buf_ptr = in_buf.get_ptr(bytes);
     inout_buf_ptr = inout_buf.get_ptr(bytes);
-    ze_kernel_args_t kernel_args = { { sizeof(in_cnt), &in_cnt },
-                                     { sizeof(in_buf_ptr), &in_buf_ptr },
-                                     { sizeof(inout_buf_ptr), &inout_buf_ptr } };
-
+    ze_kernel_args_t kernel_args{ &in_cnt, &in_buf_ptr, &inout_buf_ptr };
     LOG_DEBUG("kernel ", kernel, " args:\n", to_string(kernel_args));
     set_kernel_args(kernel, kernel_args);
 
@@ -71,19 +61,22 @@ void reduce_local_entry::init() {
              ze_base_entry::entry_event,
              0,
              nullptr));
-    ZE_CALL(zeCommandListClose, (ze_base_entry::comp_primitives.list));
+}
 
-    LOG_DEBUG("initialization complete");
+void reduce_local_entry::finalize_ze_hook() {
+    ccl::global_data::get().ze_cache->push(worker_idx, module, kernel_name, kernel);
+}
+
+void reduce_local_entry::start_on_device() {
+    ze_base_entry::start();
 }
 
 void reduce_local_entry::update() {
     CCL_THROW_IF_NOT(use_device);
-
     ze_base_entry::update();
-    if (status == ccl_sched_entry_status_complete && !sched->coll_attr.to_cache) {
-        finalize();
-    }
 }
+
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
 void reduce_local_entry::check_use_device() {
     use_device = false;
@@ -109,26 +102,4 @@ void reduce_local_entry::check_use_device() {
     if ((in_ptr_type == sycl::usm::alloc::device) && (inout_ptr_type == sycl::usm::alloc::device)) {
         use_device = true;
     }
-}
-
-void reduce_local_entry::start_on_device() {
-    init();
-
-    ze_base_entry::start();
-    status = ccl_sched_entry_status_started;
-}
-
-void reduce_local_entry::finalize() {
-    if (!ze_base_entry::is_initialized) {
-        return;
-    }
-
-    LOG_DEBUG("finalization");
-
-    // kernel cache
-    ccl::global_data::get().ze_cache->push(worker_idx, module, kernel_name, kernel);
-
-    ze_base_entry::finalize();
-
-    LOG_DEBUG("finalization complete");
 }

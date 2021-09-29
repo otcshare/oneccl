@@ -74,20 +74,6 @@ ccl_coll_attr::ccl_coll_attr(const ccl::sparse_allreduce_attr& attr) {
     sparse_coalesce_mode = attr.get<ccl::sparse_allreduce_attr_id::coalesce_mode>();
 }
 
-bool operator==(const coll_param_gpu& lhs, const coll_param_gpu& rhs) {
-    CCL_ASSERT((lhs.is_reduction() && rhs.is_reduction()) ||
-               (!lhs.is_reduction() && !rhs.is_reduction()));
-
-    bool res =
-        lhs.get_coll_type() == rhs.get_coll_type() && lhs.get_datatype() == rhs.get_datatype();
-
-    if (lhs.is_reduction()) {
-        res = res && (lhs.get_reduction() == rhs.get_reduction());
-    }
-
-    return res;
-}
-
 std::string ccl_coll_attr::to_string() const {
     std::stringstream ss;
 
@@ -144,14 +130,19 @@ std::string ccl_coll_param::to_string() const {
     ss << "{ ";
     ss << "coll: " << ccl_coll_type_to_str(ctype);
 
-    if (!send_bufs.empty())
-        ss << ", sb: " << get_send_buf() << ", sc: " << get_send_count();
+    if (!send_bufs.empty()) {
+        ss << ", sb: " << get_send_buf()
+           << ", sc: " << std::accumulate(send_counts.begin(), send_counts.end(), 0);
+    }
 
-    if (!recv_bufs.empty())
-        ss << ", rb: " << get_recv_buf() << ", rc: " << get_recv_count();
+    if (!recv_bufs.empty()) {
+        ss << ", rb: " << get_recv_buf()
+           << ", rc: " << std::accumulate(recv_counts.begin(), recv_counts.end(), 0);
+    }
 
-    if (ctype != ccl_coll_barrier)
+    if (ctype != ccl_coll_barrier) {
         ss << ", dt: " << ccl::global_data::get().dtypes->name(dtype);
+    }
 
     if (ctype == ccl_coll_allreduce || ctype == ccl_coll_reduce ||
         ctype == ccl_coll_reduce_scatter) {

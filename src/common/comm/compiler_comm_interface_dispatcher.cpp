@@ -30,7 +30,7 @@
 
 #include "common/global/global.hpp"
 
-#ifdef MULTI_GPU_SUPPORT
+#ifdef CCL_ENABLE_ZE
 #include "supported_topologies.hpp"
 #endif
 
@@ -66,7 +66,7 @@ communicator_interface_ptr communicator_interface_dispatcher::create_communicato
     size_t thread_idx,
     size_t process_idx,
     const ccl::comm_split_attr& attr,
-    std::shared_ptr<atl_wrapper> atl,
+    std::shared_ptr<atl_base_comm> atl,
     ccl::group_split_type preferred_topology_group /* = ccl::group_split_type::undetermined */) {
     static_assert(std::is_same<typename unified_device_type::ccl_native_t, DeviceType>::value,
                   "Unsupported 'DeviceType'");
@@ -92,7 +92,7 @@ communicator_interface_ptr communicator_interface_dispatcher::create_communicato
     size_t thread_idx,
     size_t process_idx,
     const ccl::comm_split_attr& attr,
-    std::shared_ptr<atl_wrapper> atl,
+    std::shared_ptr<atl_base_comm> atl,
     ccl::group_split_type preferred_topology_group /* = ccl::group_split_type::undetermined */) {
 #ifdef CCL_ENABLE_SYCL
     return communicator_interface_dispatcher::create_communicator_from_unified_device(
@@ -122,7 +122,7 @@ communicator_interface_dispatcher::create_communicator_from_unified_device(
     size_t thread_idx,
     size_t process_idx,
     const ccl::comm_split_attr& attr,
-    std::shared_ptr<atl_wrapper> atl,
+    std::shared_ptr<atl_base_comm> atl,
     ccl::group_split_type preferred_topology_group /* = ccl::group_split_type::undetermined */) {
     if (preferred_topology_group == ccl::group_split_type::undetermined) {
         preferred_topology_group = ccl::group_split_type::cluster;
@@ -140,7 +140,7 @@ communicator_interface_dispatcher::create_communicator_from_unified_device(
     }
 
     switch (preferred_topology_group) {
-#if defined(MULTI_GPU_SUPPORT) || defined(CCL_ENABLE_SYCL)
+#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
         case ccl::group_split_type::single: {
             return communicator_interface_ptr(
                 new host_communicator(std::move(device_id), std::move(context), atl));
@@ -164,7 +164,7 @@ communicator_interface_dispatcher::create_communicator_from_unified_device(
         size_t thread_idx, \
         size_t process_idx, \
         const ccl::comm_split_attr& attr, \
-        std::shared_ptr<atl_wrapper> atl, \
+        std::shared_ptr<atl_base_comm> atl, \
         ccl::group_split_type \
             preferred_topology_group /* = ccl::group_split_type::undetermined */);
 
@@ -177,7 +177,7 @@ communicator_interface_dispatcher::create_communicator_from_unified_device(
         size_t thread_idx, \
         size_t process_idx, \
         const ccl::comm_split_attr& attr, \
-        std::shared_ptr<atl_wrapper> atl, \
+        std::shared_ptr<atl_base_comm> atl, \
         ccl::group_split_type \
             preferred_topology_group /* = ccl::group_split_type::undetermined */);
 

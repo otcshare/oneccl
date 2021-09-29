@@ -38,7 +38,7 @@
 #include "common/global/global.hpp"
 #include "hwloc/hwloc_wrapper.hpp"
 #ifdef CCL_ENABLE_OFI_HMEM
-#include "sched/entry/gpu/ze_primitives.hpp"
+#include "sched/entry/ze/ze_primitives.hpp"
 #endif // CCL_ENABLE_OFI_HMEM
 
 #define ATL_OFI_BASE_PM_KEY     "atl-ofi"
@@ -113,7 +113,7 @@
                 CCL_THROW("OFI function error"); \
                 break; \
             } \
-            (void)atl_ep_poll(ep); \
+            (void)poll(ep); \
             retry_count++; \
         } while (((ret_val) == -FI_EAGAIN) && (retry_count < max_retry_count)); \
     } while (0)
@@ -255,8 +255,8 @@ typedef struct atl_ofi_global_data {
               is_env_inited(0),
               dlhandle(nullptr),
               prov_env_copy(),
-              fi_major_version(FI_MAJOR_VERSION),
-              fi_minor_version(FI_MINOR_VERSION) {
+              fi_major_version(1),
+              fi_minor_version(10) {
         memset(prov_env_copy, 0, sizeof(prov_env_copy));
     }
 } atl_ofi_global_data_t;
@@ -310,3 +310,4 @@ atl_status_t atl_ofi_open_nw_provs(atl_ctx_t* ctx,
                                    struct fi_info* base_hints,
                                    atl_attr_t* attr,
                                    std::unique_ptr<ipmi>& pmi);
+void atl_ofi_init_req(atl_req_t* req, atl_ofi_prov_ep_t* prov_ep, struct fid_ep* fi_ep);

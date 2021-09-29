@@ -79,8 +79,8 @@ ccl_executor::ccl_executor(const char* main_addr) {
                             : &ccl_executor::get_worker_idx_round_robin;
 
     /* generate ATL attr for all future communicators */
-    atl_wrapper::attr = generate_atl_attr(env);
-    atl_wrapper::set_exec(this);
+    atl_comm_manager::set_internal_env(generate_atl_attr(env));
+    atl_comm_manager::set_exec(this);
 }
 
 void ccl_executor::start_workers(int proc_idx, int proc_count) {
@@ -217,7 +217,7 @@ void ccl_executor::update_workers() {
 //    }
 //
 //    if (resize_func != NULL)
-//        ccl::global_data::get().atl->atl_set_resize_function((atl_resize_fn_t)resize_func);
+//        ccl::global_data::get().atl->set_resize_function((atl_resize_fn_t)resize_func);
 //
 //    /* pin listener thread together with first worker thread */
 //    auto worker_affinity = ccl::global_data::env().worker_affinity;
@@ -234,7 +234,7 @@ void ccl_executor::update_workers() {
 //}
 
 void ccl_executor::start(ccl_extra_sched* extra_sched) {
-    CCL_ASSERT(extra_sched->internal_type == ccl_sched_internal_unordered_coll,
+    CCL_ASSERT(extra_sched->sched_type == ccl_sched_unordered_coll,
                "should be unordered_coll for now");
 
     extra_sched->set_counter(1);
