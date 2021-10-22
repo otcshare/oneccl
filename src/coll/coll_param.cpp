@@ -17,6 +17,7 @@
 
 #include "coll/coll_param.hpp"
 #include "common/global/global.hpp"
+#include "common/utils/sycl_utils.hpp"
 
 #define COPY_COMMON_OP_ATTRS(from, to) \
     to->prologue_fn = nullptr; /*from.get<ccl::operation_attr_id::prologue_fn>().get();*/ \
@@ -459,7 +460,7 @@ void ccl_coll_param::sync_deps(const ccl_stream* s, const std::vector<ccl::event
         // do anything and just return an empty event as opposed to submit_barrier without paramers
         // which submits a full queue barrier. And there is a bug which leads to a crash if
         // empty sycl event is passed to the function.
-        auto sycl_ev = s->get_native_stream().submit_barrier();
+        auto sycl_ev = ccl::utils::submit_barrier(s->get_native_stream());
         auto e = ccl::create_event(sycl_ev);
         copy_deps(ds, &e);
         return;

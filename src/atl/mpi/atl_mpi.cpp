@@ -34,40 +34,13 @@
 
 #define RET2ATL(ret) (ret != MPI_SUCCESS) ? ATL_STATUS_FAILURE : ATL_STATUS_SUCCESS
 
-typedef struct atl_mpi_comm_info {
-    int found;
-    MPI_Comm comm;
-    char key[MPI_MAX_INFO_KEY];
-    char value[MPI_MAX_INFO_VAL];
-
-    atl_mpi_comm_info() {
-        found = 0;
-        comm = MPI_COMM_WORLD;
-        memset(key, 0, MPI_MAX_INFO_KEY);
-        memset(value, 0, MPI_MAX_INFO_VAL);
-    }
-} atl_mpi_comm_info_t;
-
-atl_mpi_comm_info_t atl_mpi_get_comm_info(MPI_Comm comm, const char* key) {
-    MPI_Info info;
-    atl_mpi_comm_info_t res;
-    res.comm = comm;
-    snprintf(res.key, MPI_MAX_INFO_KEY, "%s", key);
-
-    MPI_Comm_get_info(res.comm, &info);
-    MPI_Info_get(info, key, MPI_MAX_INFO_VAL, res.value, &res.found);
-    MPI_Info_free(&info);
-
-    return res;
-}
-
 atl_mpi_global_data atl_mpi::global_data{};
 
 atl_status_t atl_mpi::init(int* argc,
                            char*** argv,
                            atl_attr_t* attr,
                            const char* main_addr,
-                           std::unique_ptr<ipmi>& pmi) {
+                           std::shared_ptr<ipmi> pmi) {
     inited = true;
     CCL_THROW_IF_NOT((sizeof(atl_mpi_req_t) <= sizeof(atl_req_t) - offsetof(atl_req_t, internal)),
                      "unexpected offset: atl_mpi_request size ",
@@ -225,7 +198,7 @@ atl_status_t atl_mpi::finalize() {
     return RET2ATL(ret);
 }
 
-atl_status_t atl_mpi::update(std::unique_ptr<ipmi>& pmi) {
+atl_status_t atl_mpi::update(std::shared_ptr<ipmi> pmi) {
     (void)pmi;
     return ATL_STATUS_UNSUPPORTED;
 }
@@ -621,7 +594,7 @@ atl_status_t atl_mpi::cancel(atl_mpi_ep_t& ep, atl_req_t* req) {
 
 atl_status_t atl_mpi::poll(atl_mpi_ep_t& ep) {
     if (progress_mode == ATL_PROGRESS_POLL) {
-        ep_progress(ep, &(ep.dummy_req));
+        return ep_progress(ep, &(ep.dummy_req));
     }
 
     return ATL_STATUS_SUCCESS;
@@ -751,7 +724,7 @@ void atl_mpi::check_comm_ep_idx(MPI_Comm comm, size_t expected_idx) {
 }
 
 void atl_mpi::check_comm_info(MPI_Comm comm, const char* key, const char* expected_value) {
-    atl_mpi_comm_info_t info = atl_mpi_get_comm_info(comm, key);
+    atl_mpi_comm_info_t info = atl_mpi::get_comm_info(comm, key);
 
     CCL_THROW_IF_NOT(info.found, "MPI comm key ", key, " was not set");
     CCL_THROW_IF_NOT(!strcmp(info.value, expected_value),
@@ -766,6 +739,7 @@ void atl_mpi::check_comm_info(MPI_Comm comm, const char* key, const char* expect
 void atl_mpi::set_env(const atl_attr_t& attr) {
     global_data.set_env(attr);
 }
+
 atl_status_t atl_mpi::comm_split(const std::vector<atl_mpi_ep_t>& base_eps,
                                  std::vector<atl_mpi_ep_t>& eps,
                                  size_t color) {
@@ -794,9 +768,20 @@ atl_status_t atl_mpi::comm_split(const std::vector<atl_mpi_ep_t>& base_eps,
 
         if (global_data.mnic_type != ATL_MNIC_NONE) {
             /* set NIC index */
-            nic_idx = (idx % global_data.mnic_count);
+            nic_idx = idx;
+            if (global_data.mnic_offset == ATL_MNIC_OFFSET_LOCAL_PROC_IDX) {
+                nic_idx += global_coord.local_idx;
+            }
+            nic_idx %= global_data.mnic_count;
             snprintf(nic_idx_str, MPI_MAX_INFO_VAL, "%zu", nic_idx);
             MPI_Info_set(info, nic_idx_key, nic_idx_str);
+
+            LOG_INFO("select nic: ep_idx ",
+                     idx,
+                     ", local_proc_idx ",
+                     global_coord.local_idx,
+                     ", nic_idx ",
+                     nic_idx);
         }
 
         MPI_Comm_set_info(ep.mpi_comm, info);
@@ -826,6 +811,7 @@ atl_status_t atl_mpi::comm_split(const std::vector<atl_mpi_ep_t>& base_eps,
         ep.idx = idx;
         eps.push_back(ep);
     }
+
     if (ret) {
         comms_free(eps);
         global_data.ctx_count--;
@@ -839,6 +825,19 @@ atl_status_t atl_mpi::comm_split(const std::vector<atl_mpi_ep_t>& base_eps,
     }
 
     return RET2ATL(ret);
+}
+
+atl_mpi_comm_info_t atl_mpi::get_comm_info(MPI_Comm comm, const char* key) {
+    MPI_Info info;
+    atl_mpi_comm_info_t res;
+    res.comm = comm;
+    snprintf(res.key, MPI_MAX_INFO_KEY, "%s", key);
+
+    MPI_Comm_get_info(res.comm, &info);
+    MPI_Info_get(info, key, MPI_MAX_INFO_VAL, res.value, &res.found);
+    MPI_Info_free(&info);
+
+    return res;
 }
 
 #endif // CCL_ENABLE_MPI

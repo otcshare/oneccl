@@ -21,7 +21,11 @@
  */
 
 #include "coll/algorithms/algorithms.hpp"
+#include "sched/entry/coll/coll_entry_helper.hpp"
 #include "sched/entry/factory/entry_factory.hpp"
+#if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
+#include "coll/coll_util.hpp"
+#endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
 ccl::status ccl_coll_build_direct_reduce_scatter(ccl_sched* sched,
                                                  ccl_buffer send_buf,
@@ -127,7 +131,7 @@ ccl::status ccl_coll_build_ring_reduce_scatter_block(ccl_sched* sched,
 ccl::status ccl_coll_build_ring_reduce_scatter(ccl_sched* sched,
                                                ccl_buffer send_buf,
                                                ccl_buffer recv_buf,
-                                               size_t send_count,
+                                               size_t recv_count,
                                                const ccl_datatype& dtype,
                                                ccl::reduction op,
                                                ccl_comm* comm) {
@@ -151,7 +155,7 @@ ccl::status ccl_coll_build_ring_reduce_scatter(ccl_sched* sched,
     int src = (comm_size + rank - 1) % comm_size;
     int dst = (comm_size + rank + 1) % comm_size;
 
-    size_t count = send_count;
+    size_t count = recv_count;
     size_t bytes = count * dtype_size;
 
     size_t chunk_count =
@@ -285,12 +289,11 @@ ccl::status ccl_coll_build_ring_reduce_scatter(ccl_sched* sched,
                 entry_factory::create<recv_reduce_entry>(sched,
                                                          recv_reduce_local_buf,
                                                          recv_chunk_size,
-                                                         nullptr, /* out_cnt */
                                                          dtype,
                                                          op,
                                                          src,
-                                                         recv_reduce_comm_buf,
                                                          comm,
+                                                         recv_reduce_comm_buf,
                                                          recv_reduce_result_type);
             }
             else {
@@ -342,3 +345,34 @@ ccl::status ccl_coll_build_ring_reduce_scatter(ccl_sched* sched,
 
     return status;
 }
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+
+ccl::status ccl_coll_build_topo_reduce_scatter(ccl_sched* sched,
+                                               ccl_buffer send_buf,
+                                               ccl_buffer recv_buf,
+                                               size_t recv_count,
+                                               const ccl_datatype& dtype,
+                                               ccl::reduction reduction,
+                                               ccl_comm* comm) {
+    LOG_DEBUG("build topo reduce_scatter, recv_count ", recv_count);
+
+    const std::vector<ze_handle_exchange_entry::mem_desc_t> in_buffers{
+        { send_buf.get_ptr(), ccl::ze::ipc_mem_type::memory }, // 0
+    };
+
+    size_t send_buf_idx = 0;
+
+    ccl::add_handle_exchange(sched, comm, in_buffers);
+
+    std::vector<size_t> blocks_count(comm->size(), recv_count);
+    entry_factory::create<ze_a2a_reduce_scatter_entry>(
+        sched, send_buf, recv_buf, blocks_count.data(), dtype, reduction, comm, send_buf_idx);
+    sched->add_barrier();
+
+    ccl::add_comm_barrier(sched, comm);
+
+    return ccl::status::success;
+}
+
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE

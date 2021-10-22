@@ -46,29 +46,27 @@ public:
         if (status == ccl_sched_entry_status_started) {
             size_t bytes = cnt * dtype.size();
             LOG_DEBUG("cancel RECV entry src ", src, ", req ", &req, ", bytes ", bytes);
-            comm->atl->cancel(sched->bin->get_atl_ep(), &req);
+            comm->get_atl_comm()->cancel(sched->bin->get_atl_ep(), &req);
         }
     }
 
     void start() override {
         update_fields();
 
-        int global_src = comm->get_global_rank(src);
-        atl_tag = comm->atl->tag->create(
-            global_src, sched->get_comm_id(), sched->sched_id, sched->get_op_id());
+        atl_tag = comm->get_atl_comm()->tag->create(
+            src, sched->get_comm_id(), sched->sched_id, sched->get_op_id());
         size_t bytes = cnt * dtype.size();
 
-        LOG_DEBUG(
-            "RECV entry src ", global_src, ", tag ", atl_tag, ", req ", &req, ", bytes ", bytes);
+        LOG_DEBUG("RECV entry src ", src, ", tag ", atl_tag, ", req ", &req, ", bytes ", bytes);
 
-        atl_status_t atl_status = comm->atl->recv(
-            sched->bin->get_atl_ep(), buf.get_ptr(bytes), bytes, global_src, atl_tag, &req);
+        atl_status_t atl_status = comm->get_atl_comm()->recv(
+            sched->bin->get_atl_ep(), buf.get_ptr(bytes), bytes, src, atl_tag, &req);
 
         update_status(atl_status);
     }
 
     void update() override {
-        atl_status_t atl_status = comm->atl->check(sched->bin->get_atl_ep(), &req);
+        atl_status_t atl_status = comm->get_atl_comm()->check(sched->bin->get_atl_ep(), &req);
 
         if (unlikely(atl_status != ATL_STATUS_SUCCESS)) {
             CCL_THROW("RECV entry failed. atl_status: ", atl_status_to_str(atl_status));

@@ -22,6 +22,7 @@
 
 #ifdef CCL_ENABLE_SYCL
 #include <CL/sycl/backend/level_zero.hpp>
+#include "common/utils/sycl_utils.hpp"
 //static cl::sycl::vector_class<cl::sycl::device> gpu_sycl_devices;
 #endif
 
@@ -69,7 +70,7 @@ template <class ContextType>
     static_assert(
         std::is_same<typename std::remove_cv<ContextType>::type, cl::sycl::context>::value,
         "Invalid ContextType");
-    auto l0_handle_ptr = ctx.template get_native<cl::sycl::backend::level_zero>();
+    auto l0_handle_ptr = sycl::get_native<ccl::utils::get_level_zero_backend()>(ctx);
     if (!l0_handle_ptr) {
         CCL_THROW("failed for sycl context: handle is nullptr");
     }

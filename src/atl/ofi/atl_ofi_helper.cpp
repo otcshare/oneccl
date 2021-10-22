@@ -151,9 +151,11 @@ atl_ofi_prov_t* atl_ofi_get_prov(atl_ep_t* ep, int peer_proc_idx, size_t msg_siz
         prov_idx = ofi_ctx->nw_prov_first_idx + nw_prov_offset;
     }
 
-    LOG_DEBUG("get_prov: ep_idx ",
+    LOG_DEBUG("select nic: ep_idx ",
               ep->idx,
-              ", prov_idx ",
+              ", local_proc_idx ",
+              coord->local_idx,
+              ", nic_idx ",
               prov_idx,
               ", my_node_idx ",
               my_node_idx,
@@ -180,7 +182,7 @@ fi_addr_t atl_ofi_get_addr(atl_ctx_t* ctx, atl_ofi_prov_t* prov, int proc_idx, s
     return *(prov->addr_table + ((ctx->ep_count * (proc_idx - prov->first_proc_idx)) + ep_idx));
 }
 
-atl_status_t atl_ofi_get_local_proc_coord(atl_ofi_ctx_t* ofi_ctx, std::unique_ptr<ipmi>& pmi) {
+atl_status_t atl_ofi_get_local_proc_coord(atl_ofi_ctx_t* ofi_ctx, std::shared_ptr<ipmi> pmi) {
     CCL_THROW_IF_NOT(ofi_ctx, "ofi_ctx is null");
 
     atl_proc_coord_t* coord = &(ofi_ctx->ctx.coord);
@@ -222,7 +224,7 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_ofi_ctx_t* ofi_ctx, std::unique_pt
         goto fn_err;
     }
 
-    pmi->pmrt_barrier();
+    ATL_CHECK_STATUS(pmi->pmrt_barrier(), "barrier failed");
 
     all_hostnames = (char*)calloc(1, coord->global_count * ATL_MAX_HOSTNAME_LEN);
     if (!all_hostnames) {
@@ -269,7 +271,7 @@ fn_err:
 
 atl_status_t atl_ofi_prov_update_addr_table(atl_ofi_ctx_t* ofi_ctx,
                                             size_t prov_idx,
-                                            std::unique_ptr<ipmi>& pmi) {
+                                            std::shared_ptr<ipmi> pmi) {
     CCL_THROW_IF_NOT(ofi_ctx, "ofi_ctx is null");
 
     atl_ctx_t* ctx = &(ofi_ctx->ctx);
@@ -330,7 +332,7 @@ atl_status_t atl_ofi_prov_update_addr_table(atl_ofi_ctx_t* ofi_ctx,
         return ATL_STATUS_FAILURE;
     }
 
-    pmi->pmrt_barrier();
+    ATL_CHECK_STATUS(pmi->pmrt_barrier(), "barrier failed");
 
     /* retrieve all OFI EP names in order */
     for (i = 0; i < ctx->coord.global_count; i++) {
@@ -489,7 +491,7 @@ err_addr:
 
 atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t* ofi_ctx,
                                       size_t prov_idx,
-                                      std::unique_ptr<ipmi>& pmi) {
+                                      std::shared_ptr<ipmi> pmi) {
     int ret;
     size_t ep_idx;
 
@@ -935,7 +937,7 @@ atl_status_t atl_ofi_prov_init(atl_ctx_t* ctx,
                                struct fi_info* info,
                                atl_ofi_prov_t* prov,
                                atl_attr_t* attr,
-                               std::unique_ptr<ipmi>& pmi) {
+                               std::shared_ptr<ipmi> pmi) {
     struct fi_av_attr av_attr;
     size_t ep_idx = 0;
     ssize_t ret = 0;
@@ -1029,15 +1031,15 @@ atl_status_t atl_ofi_adjust_out_tag(atl_ofi_prov_t* prov, atl_attr_t* attr) {
 
     const char* prov_name = prov->info->fabric_attr->prov_name;
 
-    CCL_THROW_IF_NOT(attr->out.tag_bits > 0,
-                     "unexpected tag_bits ",
-                     attr->out.tag_bits,
-                     " for prov ",
-                     prov_name);
+    if (!(attr->out.tag_bits > 0)) {
+        LOG_ERROR("unexpected tag_bits ", attr->out.tag_bits, " for prov ", prov_name);
+        return ATL_STATUS_FAILURE;
+    }
 
-    CCL_THROW_IF_NOT(
-        attr->out.max_tag > 0, "unexpected max_tag ", attr->out.max_tag, " for prov ", prov_name);
-
+    if (!(attr->out.max_tag > 0)) {
+        LOG_ERROR("unexpected max_tag ", attr->out.max_tag, " for prov ", prov_name);
+        return ATL_STATUS_FAILURE;
+    }
     LOG_INFO(prov_name,
              " tag_bits: ",
              attr->out.tag_bits,
@@ -1059,9 +1061,11 @@ static bool atl_ofi_is_nic_down(struct fi_info* prov) {
 
 /* determine if NIC has already been included in others */
 int atl_ofi_nic_already_used(const struct fi_info* prov,
-                             const std::vector<struct fi_info*>& others) {
+                             const std::vector<struct fi_info*>& others,
+                             bool check_pci = false) {
     for (size_t i = 0; i < others.size(); i++) {
-        if (prov->nic && others[i]->nic && prov->nic->bus_attr->bus_type == FI_BUS_PCI &&
+        if (check_pci && prov->nic && others[i]->nic &&
+            prov->nic->bus_attr->bus_type == FI_BUS_PCI &&
             others[i]->nic->bus_attr->bus_type == FI_BUS_PCI) {
             struct fi_pci_attr pci = prov->nic->bus_attr->attr.pci;
             struct fi_pci_attr other_pci = others[i]->nic->bus_attr->attr.pci;
@@ -1230,7 +1234,7 @@ bool atl_ofi_compare_nics(const struct fi_info* nic1, const struct fi_info* nic2
 atl_status_t atl_ofi_open_nw_provs(atl_ctx_t* ctx,
                                    struct fi_info* base_hints,
                                    atl_attr_t* attr,
-                                   std::unique_ptr<ipmi>& pmi) {
+                                   std::shared_ptr<ipmi> pmi) {
     atl_status_t ret = ATL_STATUS_SUCCESS;
     struct fi_info* prov_list = nullptr;
     struct fi_info* prov_iter = nullptr;
@@ -1241,6 +1245,7 @@ atl_status_t atl_ofi_open_nw_provs(atl_ctx_t* ctx,
     std::vector<struct fi_info*> topo_provs;
     std::vector<struct fi_info*> final_provs;
     std::set<std::string> all_nic_names;
+    int prov_offset = 0;
 
     atl_ofi_ctx_t* ofi_ctx = container_of(ctx, atl_ofi_ctx_t, ctx);
 
@@ -1321,7 +1326,14 @@ atl_status_t atl_ofi_open_nw_provs(atl_ctx_t* ctx,
         goto err;
     }
 
-    /* 4. filter out by count */
+    /* 4. reorder according to desired offset */
+    if (ofi_ctx->mnic_offset == ATL_MNIC_OFFSET_LOCAL_PROC_IDX) {
+        prov_offset = ctx->coord.local_idx % topo_provs.size();
+    }
+    LOG_DEBUG("rotate: prov_offset ", prov_offset, ", vec_size ", topo_provs.size());
+    std::rotate(topo_provs.begin(), topo_provs.begin() + prov_offset, topo_provs.end());
+
+    /* 5. filter out by count */
     for (idx = 0; idx < topo_provs.size(); idx++) {
         prov_iter = topo_provs[idx];
         LOG_DEBUG("count filter: check nic ", atl_ofi_get_nic_name(prov_iter));
@@ -1342,7 +1354,7 @@ atl_status_t atl_ofi_open_nw_provs(atl_ctx_t* ctx,
         goto err;
     }
 
-    /* 5. create network providers */
+    /* 6. create network providers */
     LOG_INFO("found ", final_provs.size(), " nic(s) according to all filters");
     ofi_ctx->nw_prov_count = final_provs.size();
     for (idx = 0; idx < ofi_ctx->nw_prov_count; idx++) {

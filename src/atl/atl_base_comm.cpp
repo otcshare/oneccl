@@ -15,13 +15,13 @@
 */
 #ifdef CCL_ENABLE_MPI
 #include "atl/mpi/atl_mpi.hpp"
-#include "atl_mpi_comm.hpp"
+#include "atl/mpi/atl_mpi_comm.hpp"
 #endif // CCL_ENABLE_MPI
 
-#include "atl/atl_ofi_comm.hpp"
 #include "atl/atl_base_comm.hpp"
+#include "atl/ofi/atl_ofi_comm.hpp"
 #include "atl/ofi/atl_ofi.hpp"
-#include "common/global/global.hpp"
+#include "atl/util/pm/pm_rt.h"
 #include "exec/exec.hpp"
 
 atl_attr_t atl_base_comm::attr = {
@@ -35,7 +35,8 @@ atl_attr_t atl_base_comm::attr = {
         1, /* ep_count */
         ATL_MNIC_NONE, /* mnic_type */
         "", /* mnic_name */
-        1 /* mnic_count */
+        1, /* mnic_count */
+        ATL_MNIC_OFFSET_NONE /* mnic_offset */
     },
 
     /* out */
@@ -55,41 +56,36 @@ ccl_executor* atl_base_comm::executor = nullptr;
 
 void atl_base_comm::init_tag() {
     tag = std::unique_ptr<ccl_atl_tag>(new ccl_atl_tag(attr.out.tag_bits, attr.out.max_tag));
-
     if (rank == 0) {
-        tag->print();
-        LOG_INFO("atl-in-attrs:");
-        LOG_INFO("  enable_shm: ", attr.in.enable_shm);
-        LOG_INFO("  enable_rma: ", attr.in.enable_rma);
-        LOG_INFO("  enable_hmem: ", attr.in.enable_hmem);
-        LOG_INFO("  enable_sync_coll: ", attr.in.enable_sync_coll);
-        LOG_INFO("  enable_extra_ep: ", attr.in.enable_extra_ep);
-        LOG_INFO("  ep_count: ", attr.in.ep_count);
-        LOG_INFO("  mnic_type: ", attr.in.mnic_type);
-        LOG_INFO("  mnic_count: ", attr.in.mnic_count);
-
-        LOG_INFO("atl-out-attrs:");
-        LOG_INFO("  enable_shm: ", attr.out.enable_shm);
-        LOG_INFO("  enable_rma: ", attr.out.enable_rma);
-        LOG_INFO("  enable_hmem: ", attr.out.enable_hmem);
-        LOG_INFO("  mnic_type: ", attr.out.mnic_type);
-        LOG_INFO("  mnic_count: ", attr.out.mnic_count);
-        LOG_INFO("  tag_bits: ", attr.out.tag_bits);
-        LOG_INFO("  max_tag: ", attr.out.max_tag);
-        LOG_INFO("  max_order_waw_size: ", attr.out.max_order_waw_size);
+        LOG_DEBUG("atl tag: ", tag->to_string());
     }
+}
+
+void atl_base_comm::print_atl_attrs() {
+    std::stringstream ss;
+
+    ss << "atl attrs:\n{\n"
+       << "  in: { "
+       << "shm: " << attr.in.enable_shm << ", hmem: " << attr.in.enable_hmem
+       << ", sync_coll: " << attr.in.enable_sync_coll << ", extra_ep: " << attr.in.enable_extra_ep
+       << ", ep_count: " << attr.in.ep_count << ", mnic_type: " << to_string(attr.in.mnic_type)
+       << ", mnic_count: " << attr.in.mnic_count
+       << ", mnic_offset: " << to_string(attr.in.mnic_offset) << " }\n"
+       << "  out: { "
+       << "shm: " << attr.out.enable_shm << ", hmem: " << attr.out.enable_hmem
+       << ", mnic_type: " << to_string(attr.out.mnic_type)
+       << ", mnic_count: " << attr.out.mnic_count << ", tag_bits: " << attr.out.tag_bits
+       << ", max_tag: " << attr.out.max_tag << " }\n}";
+
+    LOG_INFO(ss.str());
 }
 
 void atl_base_comm::executor_update() {
     if (!executor->are_workers_started()) {
-        atl_proc_coord_t* coord = get_proc_coord();
-        if (rank < coord->local_count)
-            LOG_INFO("start workers for local process [",
-                     coord->local_idx,
-                     ":",
-                     coord->local_count,
-                     "]");
-        executor->start_workers(coord->local_idx, coord->local_count);
+        if (rank < coord.local_count)
+            LOG_INFO(
+                "start workers for local process [", coord.local_idx, ":", coord.local_count, "]");
+        executor->start_workers(coord.local_idx, coord.local_count);
     }
 }
 

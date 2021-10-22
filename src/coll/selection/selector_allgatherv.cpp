@@ -25,7 +25,7 @@ std::map<ccl_coll_allgatherv_algo, std::string>
         std::make_pair(ccl_coll_allgatherv_ring, "ring"),
         std::make_pair(ccl_coll_allgatherv_flat, "flat"),
         std::make_pair(ccl_coll_allgatherv_multi_bcast, "multi_bcast"),
-        std::make_pair(ccl_coll_allgatherv_topo_a2a, "topo_a2a")
+        std::make_pair(ccl_coll_allgatherv_topo, "topo")
     };
 
 ccl_algorithm_selector<ccl_coll_allgatherv>::ccl_algorithm_selector() {
@@ -36,8 +36,9 @@ ccl_algorithm_selector<ccl_coll_allgatherv>::ccl_algorithm_selector() {
                CCL_SELECTION_MAX_COLL_SIZE,
                ccl_coll_allgatherv_ring);
     }
-    else if (ccl::global_data::env().atl_transport == ccl_atl_mpi)
+    else if (ccl::global_data::env().atl_transport == ccl_atl_mpi) {
         insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_allgatherv_direct);
+    }
 
     insert(fallback_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_allgatherv_flat);
 }
@@ -49,7 +50,7 @@ bool ccl_algorithm_selector_helper<ccl_coll_allgatherv_algo>::can_use(
     const ccl_selection_table_t<ccl_coll_allgatherv_algo>& table) {
     bool can_use = true;
 
-    if (algo == ccl_coll_allgatherv_topo_a2a && !ccl_can_use_topo_a2a_algo(param)) {
+    if (algo == ccl_coll_allgatherv_topo && !ccl_can_use_topo_algo(param)) {
         can_use = false;
     }
     else if (param.is_vector_buf && algo != ccl_coll_allgatherv_flat &&

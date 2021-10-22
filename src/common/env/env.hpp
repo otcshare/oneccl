@@ -62,6 +62,7 @@ constexpr const char* CCL_ATL_CACHE = "CCL_ATL_CACHE";
 constexpr const char* CCL_MNIC = "CCL_MNIC";
 constexpr const char* CCL_MNIC_NAME = "CCL_MNIC_NAME";
 constexpr const char* CCL_MNIC_COUNT = "CCL_MNIC_COUNT";
+constexpr const char* CCL_MNIC_OFFSET = "CCL_MNIC_OFFSET";
 
 constexpr const char* CCL_ALGO_FALLBACK = "CCL_ALGO_FALLBACK";
 constexpr const char* CCL_ALLGATHERV = "CCL_ALLGATHERV";
@@ -103,22 +104,27 @@ constexpr const char* CCL_AR2D_MIN_CHUNK_SIZE = "CCL_AR2D_MIN_CHUNK_SIZE";
 constexpr const char* CCL_ALLREDUCE_2D_BASE_SIZE = "CCL_ALLREDUCE_2D_BASE_SIZE";
 constexpr const char* CCL_ALLREDUCE_2D_SWITCH_DIMS = "CCL_ALLREDUCE_2D_SWITCH_DIMS";
 
+constexpr const char* CCL_ALLREDUCE_NREDUCE_BUFFERING = "CCL_ALLREDUCE_NREDUCE_BUFFERING";
+constexpr const char* CCL_ALLREDUCE_NREDUCE_SEGMENT_SIZE = "CCL_ALLREDUCE_NREDUCE_SEGMENT_SIZE";
+
 constexpr const char* CCL_ALLTOALL_SCATTER_MAX_OPS = "CCL_ALLTOALL_SCATTER_MAX_OPS";
 constexpr const char* CCL_ALLTOALL_SCATTER_PLAIN = "CCL_ALLTOALL_SCATTER_PLAIN";
 
-constexpr const char* CCL_COMM_KERNELS = "CCL_COMM_KERNELS";
 constexpr const char* CCL_KERNEL_PATH = "CCL_KERNEL_PATH";
 constexpr const char* CCL_KERNEL_DEBUG = "CCL_KERNEL_DEBUG";
-constexpr const char* CCL_ZE_CACHE = "CCL_ZE_CACHE";
 constexpr const char* CCL_KERNEL_GROUP_SIZE = "CCL_KERNEL_GROUP_SIZE";
 constexpr const char* CCL_KERNEL_GROUP_COUNT = "CCL_KERNEL_GROUP_COUNT";
 constexpr const char* CCL_KERNEL_SYNC = "CCL_KERNEL_SYNC";
 constexpr const char* CCL_KERNEL_1S_LEAD = "CCL_KERNEL_1S_LEAD";
 constexpr const char* CCL_KERNEL_1S_USE_COPY_OPS = "CCL_KERNEL_1S_USE_COPY_OPS";
 constexpr const char* CCL_KERNEL_1S_IPC_WA = "CCL_KERNEL_1S_IPC_WA";
-constexpr const char* CCL_KERNEL_OUTPUT_EVENT = "CCL_KERNEL_OUTPUT_EVENT";
 constexpr const char* CCL_KERNEL_PROFILE = "CCL_KERNEL_PROFILE";
+constexpr const char* CCL_KERNEL_CLOSE_FD_WA = "CCL_KERNEL_CLOSE_FD_WA";
+
+constexpr const char* CCL_SYCL_OUTPUT_EVENT = "CCL_SYCL_OUTPUT_EVENT";
+
 constexpr const char* CCL_ZE_BARRIER = "CCL_ZE_BARRIER";
+constexpr const char* CCL_ZE_CACHE = "CCL_ZE_CACHE";
 constexpr const char* CCL_ZE_SERIALIZE = "CCL_ZE_SERIALIZE";
 constexpr const char* CCL_ZE_COPY_ENGINE = "CCL_ZE_COPY_ENGINE";
 constexpr const char* CCL_ZE_QUEUE_INDEX = "CCL_ZE_QUEUE_INDEX";
@@ -190,6 +196,7 @@ public:
     atl_mnic_t mnic_type;
     std::string mnic_name_raw;
     ssize_t mnic_count;
+    atl_mnic_offset_t mnic_offset;
 
     /*
        parsing logic can be quite complex
@@ -235,10 +242,13 @@ public:
 
     ssize_t allreduce_2d_base_size;
     int allreduce_2d_switch_dims;
+    int allreduce_nreduce_buffering;
+    ssize_t allreduce_nreduce_segment_size;
 
     ssize_t alltoall_scatter_max_ops;
     int alltoall_scatter_plain;
 
+#ifdef CCL_ENABLE_SYCL
     std::string kernel_path;
     int kernel_debug;
     ssize_t kernel_group_size;
@@ -247,8 +257,10 @@ public:
     int kernel_1s_lead;
     int enable_kernel_1s_copy_ops;
     int enable_kernel_1s_ipc_wa;
-    int enable_kernel_output_event;
     int enable_kernel_profile;
+    int enable_close_fd_wa;
+
+    int enable_sycl_output_event;
 
     int enable_ze_barrier;
     int enable_ze_cache;
@@ -256,6 +268,7 @@ public:
     ccl_ze_copy_engine_mode ze_copy_engine;
     int ze_queue_index;
     int ze_close_ipc_wa;
+#endif // CCL_ENABLE_SYCL
 
     ccl_bf16_impl_type bf16_impl_type;
     ccl_fp16_impl_type fp16_impl_type;
@@ -332,10 +345,9 @@ public:
     static std::map<ccl_atl_send_proxy, std::string> atl_send_proxy_names;
     static std::map<ccl_staging_buffer, std::string> staging_buffer_names;
     static std::map<ccl_ze_copy_engine_mode, std::string> ze_copy_engine_names;
-    static std::map<atl_mnic_t, std::string> mnic_type_names;
 
     int env_2_worker_affinity(int local_proc_idx, int local_proc_count);
-    int env_2_worker_mem_affinity();
+    int env_2_worker_mem_affinity(int local_proc_count);
     void env_2_atl_transport();
 
 private:

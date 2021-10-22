@@ -15,12 +15,12 @@
 */
 #include <numeric>
 
-#include "coll/algorithms/algorithms_enum.hpp"
+#include "coll/algorithms/algorithm_utils.hpp"
 #include "coll/coll_param.hpp"
 #include "coll/selection/selection.hpp"
 #include "common/global/global.hpp"
 #include "common/comm/comm.hpp"
-#include "common/comm/host_communicator/host_communicator.hpp"
+#include "common/utils/sycl_utils.hpp"
 #include "sched/entry/factory/entry_factory.hpp"
 #include "sched/sched_base.hpp"
 
@@ -30,8 +30,9 @@ ccl_sched_base::ccl_sched_base(const ccl_sched_create_param& param)
           coll_param(param.coll_param) {
     memory.buffer_manager.init(sched_id);
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    if (coll_param.stream && coll_param.stream->get_backend() == cl::sycl::backend::level_zero) {
-        auto node_comm = coll_param.comm->get_host_comm()->get_node_comm()->get_ccl_comm().get();
+    if (coll_param.stream &&
+        coll_param.stream->get_backend() == ccl::utils::get_level_zero_backend()) {
+        auto node_comm = coll_param.comm->get_node_comm().get();
         memory.handle_manager.init(node_comm, coll_param.stream);
         memory.ipc_event_pool_manager.init(coll_param.stream);
     }
@@ -170,7 +171,8 @@ void ccl_sched_base::dealloc_buffer(const ccl::dealloc_param& user_param) {
 void ccl_sched_base::clear_memory() {
     memory.buffer_manager.clear();
 #ifdef CCL_ENABLE_ZE
-    if (coll_param.stream && coll_param.stream->get_backend() == cl::sycl::backend::level_zero) {
+    if (coll_param.stream &&
+        coll_param.stream->get_backend() == ccl::utils::get_level_zero_backend()) {
         memory.handle_manager.clear();
         memory.ipc_event_pool_manager.clear();
     }

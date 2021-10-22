@@ -152,9 +152,15 @@ void ccl_master_sched::reset_state() {
 
 ccl_request* ccl_master_sched::start(ccl_executor* exec, bool reset_sched) {
     /* sanity check the schedule */
-    CCL_ASSERT(coll_param.comm);
+    CCL_THROW_IF_NOT(coll_param.comm);
 
     LOG_DEBUG("starting schedule ", this, ", type ", ccl_coll_type_to_str(coll_param.ctype));
+
+#ifdef CCL_ENABLE_SYCL
+    if (ccl::global_data::env().enable_kernel_profile) {
+        get_kernel_timer().set_operation_start_time(ccl::kernel_timer::get_current_time());
+    }
+#endif // CCL_ENABLE_SYCL
 
     prepare_partial_scheds();
 
@@ -176,18 +182,16 @@ ccl_request* ccl_master_sched::start(ccl_executor* exec, bool reset_sched) {
         auto q = coll_param.stream->get_native_stream();
         auto context = q.get_context();
 #ifdef CCL_ENABLE_SYCL_INTEROP_EVENT
-        auto e = sycl::level_zero::make<sycl::event>(
-            context, get_memory().sync_event, sycl::level_zero::ownership::keep);
+        auto e = ccl::utils::make_event(context, get_memory().sync_event);
         set_sync_event(e);
-
-        set_native_event(q.submit_barrier({ e }));
-#else
-        CCL_THROW(
-            "interop event functionality is not available with current configuration, please rebuild oneCCL using ENABLE_SYCL_INTEROP_EVENT option"
-            "and a DPCPP compiler that supports that feature");
-#endif
+        set_native_event(ccl::utils::submit_barrier(q, e));
+#else // CCL_ENABLE_SYCL_INTEROP_EVENT
+        CCL_THROW("interop event functionality is not available with current configuration, "
+                  "please rebuild oneCCL using ENABLE_SYCL_INTEROP_EVENT option "
+                  "and a DPCPP compiler that supports that feature");
+#endif // CCL_ENABLE_SYCL_INTEROP_EVENT
     }
-#endif
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     exec->start(this);
     return this;
@@ -312,9 +316,10 @@ ccl_master_sched::ccl_master_sched_ptr ccl_master_sched::create(const ccl_coll_p
     return sched;
 }
 
+#ifdef CCL_ENABLE_SYCL
 bool ccl_master_sched::print_kernel_timer() const {
     if (ccl::global_data::env().enable_kernel_profile) {
-        return timer.print();
+        return kernel_timer.print();
     }
 
     // if we don't have env variable set, just return false to say that we haven't printed
@@ -323,5 +328,6 @@ bool ccl_master_sched::print_kernel_timer() const {
 }
 
 void ccl_master_sched::reset_kernel_timer() {
-    timer.reset();
+    kernel_timer.reset();
 }
+#endif // CCL_ENABLE_SYCL

@@ -20,19 +20,18 @@ std::map<ccl_coll_allreduce_algo, std::string>
     ccl_algorithm_selector_helper<ccl_coll_allreduce_algo>::algo_names = {
         std::make_pair(ccl_coll_allreduce_direct, "direct"),
         std::make_pair(ccl_coll_allreduce_rabenseifner, "rabenseifner"),
-        std::make_pair(ccl_coll_allreduce_starlike, "starlike"),
+        std::make_pair(ccl_coll_allreduce_nreduce, "nreduce"),
         std::make_pair(ccl_coll_allreduce_ring, "ring"),
         std::make_pair(ccl_coll_allreduce_ring_rma, "ring_rma"),
         std::make_pair(ccl_coll_allreduce_double_tree, "double_tree"),
         std::make_pair(ccl_coll_allreduce_recursive_doubling, "recursive_doubling"),
         std::make_pair(ccl_coll_allreduce_2d, "2d"),
-        std::make_pair(ccl_coll_allreduce_topo_ring, "topo_ring"),
-        std::make_pair(ccl_coll_allreduce_topo_a2a, "topo_a2a")
+        std::make_pair(ccl_coll_allreduce_topo, "topo"),
     };
 
 ccl_algorithm_selector<ccl_coll_allreduce>::ccl_algorithm_selector() {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_allreduce_topo_ring);
+    insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_allreduce_topo);
     if (ccl::global_data::env().atl_transport == ccl_atl_ofi) {
         insert(fallback_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_allreduce_ring);
         insert(
@@ -48,7 +47,7 @@ ccl_algorithm_selector<ccl_coll_allreduce>::ccl_algorithm_selector() {
         insert(main_table,
                CCL_ALLREDUCE_SHORT_MSG_SIZE + 1,
                CCL_ALLREDUCE_MEDIUM_MSG_SIZE,
-               ccl_coll_allreduce_starlike);
+               ccl_coll_allreduce_nreduce);
     }
     else if (ccl::global_data::env().atl_transport == ccl_atl_mpi) {
         insert(main_table, 0, CCL_SELECTION_MAX_COLL_SIZE, ccl_coll_allreduce_direct);
@@ -75,7 +74,7 @@ bool ccl_algorithm_selector_helper<ccl_coll_allreduce_algo>::can_use(
         can_use = false;
     else if (algo == ccl_coll_allreduce_ring_rma && !atl_base_comm::attr.out.enable_rma)
         can_use = false;
-    else if (algo == ccl_coll_allreduce_starlike && !(param.count / param.comm->size()))
+    else if (algo == ccl_coll_allreduce_nreduce && !(param.count / param.comm->size()))
         can_use = false;
     else if (algo == ccl_coll_allreduce_2d &&
              (ccl::global_data::env().atl_transport == ccl_atl_mpi))
@@ -83,9 +82,7 @@ bool ccl_algorithm_selector_helper<ccl_coll_allreduce_algo>::can_use(
     else if (algo == ccl_coll_allreduce_direct &&
              (ccl::global_data::env().atl_transport == ccl_atl_ofi))
         can_use = false;
-    else if (algo == ccl_coll_allreduce_topo_ring && !ccl_can_use_topo_ring_algo(param))
-        can_use = false;
-    else if (algo == ccl_coll_allreduce_topo_a2a && !ccl_can_use_topo_a2a_algo(param))
+    else if (algo == ccl_coll_allreduce_topo && !ccl_can_use_topo_algo(param))
         can_use = false;
 
     return can_use;

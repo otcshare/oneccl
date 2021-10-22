@@ -47,6 +47,7 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         sched/entry/ze/allreduce/ze_ring_allreduce_entry.cpp
         sched/entry/ze/ze_a2a_allgatherv_entry.cpp
         sched/entry/ze/ze_a2a_gatherv_entry.cpp
+        sched/entry/ze/ze_a2a_reduce_scatter_entry.cpp
         sched/entry/ze/ze_base_entry.cpp
         sched/entry/ze/ze_barrier_entry.cpp
         sched/entry/ze/ze_cache.cpp
@@ -57,8 +58,8 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         sched/entry/ze/ze_event_wait_entry.cpp
         sched/entry/ze/ze_onesided_reduce_entry.cpp
         sched/entry/ze/ze_primitives.cpp
+        sched/entry/ze/ze_reduce_local_entry.cpp
 
-        sched/entry/reduce_local_entry.cpp
         sched/ze_handle_manager.cpp
         sched/ze_ipc_event_pool_manager.cpp
 
@@ -69,9 +70,10 @@ endif(CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
 set(CCL_SRC
 
     atl/atl_base_comm.cpp
-    atl/atl_ofi_comm.cpp
-    atl/atl_mpi_comm.cpp
-    atl/atl_mpi_global_data.cpp
+    atl/atl_def.cpp
+    atl/ofi/atl_ofi_comm.cpp
+    atl/mpi/atl_mpi_comm.cpp
+    atl/mpi/atl_mpi_global_data.cpp
     atl/mpi/atl_mpi.cpp
     atl/ofi/atl_ofi.cpp
     atl/ofi/atl_ofi_helper.cpp
@@ -81,10 +83,8 @@ set(CCL_SRC
     atl/util/pm/pmi_resizable_rt/pmi_resizable/helper.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/kvs_keeper.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/pmi_listener.cpp
-    atl/util/pm/pmi_resizable_rt/pmi_resizable/rank_list.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/request_wrappers_k8s.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/resizable_pmi.cpp
-    atl/util/pm/pmi_resizable_rt/pmi_resizable/shift_list.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/kvs/internal_kvs.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/kvs/internal_kvs_server.cpp
     atl/util/pm/pmi_resizable_rt/pmi_resizable/kvs/users_kvs.cpp
@@ -131,7 +131,6 @@ set(CCL_SRC
     common/comm/atl_tag.cpp
     common/comm/comm.cpp
     common/comm/compiler_comm_interface_dispatcher.cpp
-    common/comm/host_communicator/host_communicator.cpp
     common/context/context.cpp
     common/datatype/datatype.cpp
     common/device/device.cpp
@@ -144,6 +143,7 @@ set(CCL_SRC
     common/log/log.cpp
     common/request/request.cpp
     common/stream/stream.cpp
+    common/utils/memcpy.cpp
     common/utils/spinlock.cpp
     common/utils/version.cpp
     common/utils/yield.cpp
@@ -179,6 +179,8 @@ set(CCL_SRC
     sched/entry/copy/copy_helper.cpp
     sched/entry/entry.cpp
     sched/entry/factory/chunked_entry_factory.cpp
+    sched/entry/recv_copy_entry.cpp
+    sched/entry/reduce_local_entry.cpp
     sched/queue/flow_control.cpp
     sched/queue/queue.cpp
     sched/queue/strict_queue.cpp
@@ -289,11 +291,6 @@ endif()
 # shared library
 add_library(ccl SHARED $<TARGET_OBJECTS:ccl-objects>)
 target_include_directories(ccl PUBLIC ${SRC_INCLUDE_DIRS})
-
-# link with release_mt libmpi.so for oneAPI Base toolkit
-# libccl.so -> cpu_icc/cpu_gpu_dpcpp -> lib -> latest -> ccl -> mpi -> ...
-set(ONEAPI_IMPI_RPATH "'$ORIGIN'/../../../../mpi/latest/lib/release_mt/")
-set_target_properties(ccl PROPERTIES LINK_FLAGS "-Wl,-rpath,${ONEAPI_IMPI_RPATH}")
 
 target_link_libraries(ccl PUBLIC ${SRC_LINK_LIBS})
 

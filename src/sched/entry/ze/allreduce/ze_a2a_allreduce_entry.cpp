@@ -16,6 +16,7 @@
 #include "common/stream/stream.hpp"
 #include "sched/entry/ze/allreduce/ze_a2a_allreduce_entry.hpp"
 #include "sched/entry/ze/ze_a2a_allgatherv_entry.hpp"
+#include "sched/entry/ze/ze_a2a_reduce_scatter_entry.hpp"
 #include "sched/entry/ze/ze_cache.hpp"
 #include "sched/entry/ze/ze_primitives.hpp"
 #include "sched/queue/queue.hpp"
@@ -31,47 +32,21 @@ ze_a2a_allreduce_entry::ze_a2a_allreduce_entry(ccl_sched* sched,
                                                size_t cnt,
                                                const ccl_datatype& dtype,
                                                reduction op,
-                                               ccl_comm* comm)
+                                               ccl_comm* comm,
+                                               size_t send_buf_idx,
+                                               size_t recv_buf_idx)
         : ze_base_entry(sched,
                         (init_mode::compute | init_mode::copy),
                         comm,
                         comm->size() * event_group_count),
           send_buf(send_buf),
           recv_buf(recv_buf),
+          cnt(cnt),
           dtype(dtype),
           op(op),
-          buf_count(cnt),
-          buf_bytes(dtype.size() * buf_count),
+          send_buf_idx(send_buf_idx),
+          recv_buf_idx(recv_buf_idx),
           peer_count(comm->size() - 1) {}
-
-void ze_a2a_allreduce_entry::kernel_init(size_t main_block_count,
-                                         size_t block_count,
-                                         void* base_ptr) {
-    global_data::get().ze_cache->get(context, device, "kernels.spv", &module);
-    std::string kernel_name =
-        "reduce_local_inplace_kernel_" + to_string(dtype.idx()) + "_" + ccl_reduction_to_str(op);
-
-    /* reduce peer values in tmp_buf only */
-    kernels.reserve(peer_count);
-    unsigned long count = block_count;
-    for (int i = 1; i < peer_count; ++i) {
-        void* input_buf = static_cast<char*>(base_ptr) + i * block_count * dtype.size();
-        void* inoutput_buf = base_ptr;
-        kernels.emplace_back(module, kernel_name, worker_idx);
-        kernels.back().set_args({ &count, &input_buf, &inoutput_buf });
-        kernels.back().calculate_group_size(count);
-        kernel_events.emplace_back(ze_base_entry::create_event());
-    }
-
-    /* reduce send_buf + tmp_buf */
-    void* input_buf =
-        static_cast<char*>(send_buf.get_ptr()) + comm_rank * main_block_count * dtype.size();
-    void* inoutput_buf = base_ptr;
-    kernels.emplace_back(module, kernel_name, worker_idx);
-    kernels.back().set_args({ &count, &input_buf, &inoutput_buf });
-    kernels.back().calculate_group_size(count);
-    kernel_events.emplace_back(ze_base_entry::create_event());
-}
 
 void ze_a2a_allreduce_entry::init_ze_hook() {
     /* get peer buffers */
@@ -80,20 +55,20 @@ void ze_a2a_allreduce_entry::init_ze_hook() {
 
     for (int i = 0; i < peer_count; ++i) {
         int peer_rank = (comm_rank + i + 1) % comm->size();
-        sched->get_memory().handle_manager.get(peer_rank, 0, peer_send_bufs[i], comm);
+        sched->get_memory().handle_manager.get(peer_rank, send_buf_idx, peer_send_bufs[i], comm);
         CCL_THROW_IF_NOT(peer_send_bufs[i].get_ptr(), "null IPC buffer is received");
-        sched->get_memory().handle_manager.get(peer_rank, 1, peer_recv_bufs[i], comm);
+        sched->get_memory().handle_manager.get(peer_rank, recv_buf_idx, peer_recv_bufs[i], comm);
         CCL_THROW_IF_NOT(peer_recv_bufs[i].get_ptr(), "null IPC buffer is received");
     }
 
-    size_t main_block_count = buf_count / comm_size;
-    if (main_block_count == 0 && static_cast<size_t>(comm_rank) < buf_count) {
+    size_t main_block_count = cnt / comm_size;
+    if (main_block_count == 0 && static_cast<size_t>(comm_rank) < cnt) {
         main_block_count = 1;
     }
 
     size_t block_count = main_block_count;
     if (comm_rank == comm_size - 1) {
-        block_count += buf_count - main_block_count * comm_size;
+        block_count += cnt - main_block_count * comm_size;
     }
 
     CCL_THROW_IF_NOT(main_block_count > 0, "wrong segment count");
@@ -111,46 +86,44 @@ void ze_a2a_allreduce_entry::init_ze_hook() {
               block_count,
               ", tmp buf size: ",
               tmp_buf_bytes,
-              ", buf_count: ",
-              buf_count);
-
-    kernel_init(main_block_count, block_count, tmp_buf);
+              ", cnt: ",
+              cnt);
 
     /* copy peer segments to temp buffer */
     size_t main_block_bytes = main_block_count * dtype.size();
     size_t block_bytes = block_count * dtype.size();
-    pre_copy_events.reserve(peer_count);
-    for (int i = 0; i < peer_count; ++i) {
-        pre_copy_events.emplace_back(ze_base_entry::create_event());
-        void* src = static_cast<char*>(peer_send_bufs[i].get_ptr()) + comm_rank * main_block_bytes;
-        void* dst = static_cast<char*>(tmp_buf) + i * block_bytes;
-        ZE_CALL(zeCommandListAppendMemoryCopy,
-                (ze_base_entry::get_copy_list(),
-                 dst,
-                 src,
-                 block_bytes,
-                 pre_copy_events.back(),
-                 0,
-                 nullptr));
+
+    pre_copy_events.resize(peer_count);
+    for (auto& event : pre_copy_events) {
+        event = ze_base_entry::create_event();
+    }
+
+    kernel_events.resize(peer_count);
+    for (auto& event : kernel_events) {
+        event = ze_base_entry::create_event();
     }
 
     barrier_event = ze_base_entry::create_event();
-    ZE_CALL(zeCommandListAppendBarrier,
-            (ze_base_entry::get_copy_list(),
-             barrier_event,
-             pre_copy_events.size(),
-             pre_copy_events.data()));
 
-    /* reduce stage */
-    for (size_t i = 0; i < kernels.size(); ++i) {
-        ZE_CALL(zeCommandListAppendLaunchKernel,
-                (ze_base_entry::comp_primitives.list,
-                 kernels[i].get_kernel(),
-                 kernels[i].get_group_count(),
-                 kernel_events.at(i),
-                 1,
-                 (i == 0) ? &barrier_event : &kernel_events.at(i - 1)));
-    }
+    ze_a2a_reduce_scatter_entry::fill_list(ze_base_entry::get_copy_list(),
+                                           ze_base_entry::comp_primitives.list,
+                                           send_buf.get_ptr(),
+                                           tmp_buf,
+                                           peer_send_bufs,
+                                           peer_count,
+                                           comm_rank,
+                                           block_count,
+                                           comm_rank * main_block_bytes,
+                                           pre_copy_events,
+                                           kernels,
+                                           kernel_events,
+                                           barrier_event,
+                                           dtype,
+                                           module,
+                                           device,
+                                           context,
+                                           op,
+                                           worker_idx);
 
     post_copy_events.resize(comm_size);
     for (auto& event : post_copy_events) {
@@ -167,6 +140,21 @@ void ze_a2a_allreduce_entry::init_ze_hook() {
                                        false,
                                        post_copy_events,
                                        kernel_events.back());
+}
+
+void ze_a2a_allreduce_entry::start() {
+    if ((comm_size == 1) && (send_buf == recv_buf)) {
+        status = ccl_sched_entry_status_complete;
+        return;
+    }
+
+    size_t main_block_count = cnt / comm_size;
+    if ((main_block_count == 0 && static_cast<size_t>(comm_rank) >= cnt)) {
+        status = ccl_sched_entry_status_complete;
+        return;
+    }
+
+    ze_base_entry::start();
 }
 
 void ze_a2a_allreduce_entry::update() {

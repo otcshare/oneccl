@@ -35,6 +35,7 @@
 #include "sched/entry/probe_entry.hpp"
 #include "sched/entry/prologue_entry.hpp"
 #include "sched/entry/recv_entry.hpp"
+#include "sched/entry/recv_copy_entry.hpp"
 #include "sched/entry/recv_reduce_entry.hpp"
 #include "sched/entry/reduce_local_entry.hpp"
 #include "sched/entry/register_entry.hpp"
@@ -51,12 +52,14 @@
 #include "sched/entry/ze/allreduce/ze_ring_allreduce_entry.hpp"
 #include "sched/entry/ze/ze_a2a_allgatherv_entry.hpp"
 #include "sched/entry/ze/ze_a2a_gatherv_entry.hpp"
+#include "sched/entry/ze/ze_a2a_reduce_scatter_entry.hpp"
 #include "sched/entry/ze/ze_barrier_entry.hpp"
 #include "sched/entry/ze/ze_copy_entry.hpp"
 #include "sched/entry/ze/ze_handle_exchange_entry.hpp"
 #include "sched/entry/ze/ze_event_signal_entry.hpp"
 #include "sched/entry/ze/ze_event_wait_entry.hpp"
 #include "sched/entry/ze/ze_onesided_reduce_entry.hpp"
+#include "sched/entry/ze/ze_reduce_local_entry.hpp"
 #endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
 #include "sched/sched.hpp"

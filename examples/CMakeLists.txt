@@ -30,7 +30,6 @@ endif()
 
 if (DEFINED ENV{I_MPI_ROOT})
     set(I_MPI_ROOT "$ENV{I_MPI_ROOT}")
-    set(CMAKE_INSTALL_RPATH "${I_MPI_ROOT}/lib/release_mt/")
 endif()
 
 message(STATUS "CCL_ROOT: ${CCL_ROOT}")
@@ -66,11 +65,14 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} ${CXX_COMP
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if (${CMAKE_C_COMPILER_ID} STREQUAL "Clang" AND ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR(${CMAKE_CXX_COMPILER_ID} STREQUAL "IntelLLVM"))
+if ("${COMPUTE_BACKEND}" STREQUAL "dpcpp_level_zero")
     set(CMAKE_CLANG_FLAGS "-fsycl")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -lsycl")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_CLANG_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CLANG_FLAGS}")
+endif()
+
+if (${CMAKE_C_COMPILER_ID} STREQUAL "Clang" AND ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR(${CMAKE_CXX_COMPILER_ID} STREQUAL "IntelLLVM"))
     # Use c++17 to be aligned with the compiler
     set(CMAKE_CXX_STANDARD 17)
 endif()
@@ -98,7 +100,7 @@ endif()
 include_directories(include)
 
 add_subdirectory(cpu)
-if (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "IntelLLVM")
+if ("${COMPUTE_BACKEND}" STREQUAL "dpcpp_level_zero")
     add_subdirectory(sycl)
 endif()
 add_subdirectory(common)
